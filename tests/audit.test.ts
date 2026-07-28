@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadRubric, auditRequirement } from '../src/audit.ts';
+import { loadRubric, auditRequirement, submitFindings, type AuditFinding } from '../src/audit.ts';
 import { ArtifactType } from '../src/trace/schema.ts';
 import { TraceStore } from '../src/trace/store.ts';
 
@@ -76,4 +76,120 @@ test('audit_requirement rejects a requirement with no text', () => {
   });
 
   assert.throws(() => auditRequirement(store, empty.id), /has no content\.text to audit/);
+});
+
+const ai = { producer: 'ai' as const, model: 'claude-opus-5', promptVersion: 'caller-supplied' };
+
+const vagueFinding = (over: Partial<AuditFinding> = {}): AuditFinding => ({
+  category: 'AMB-VAGUE-QUANT',
+  quote: 'load quickly',
+  question: 'What p95 load time counts as "quickly", and on what connection?',
+  confidence: 'high',
+  ...over,
+});
+
+const countArtifacts = (store: TraceStore) => store.list(undefined, 1e9).length;
+
+test('audit_submit records findings linked back to the requirement', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+
+  const written = submitFindings(store, {
+    requirementId: req.id,
+    findings: [vagueFinding(), vagueFinding({ category: 'AMB-MISSING-ACTOR', quote: 'are notified' })],
+    provenance: ai,
+  });
+
+  assert.equal(written.length, 2);
+  assert.equal(written[0].type, 'finding');
+  assert.equal(written[0].sourceRef, 'PROJ-114', 'inherits the requirement sourceRef');
+  assert.equal(written[0].content.category, 'AMB-VAGUE-QUANT');
+  assert.equal(written[0].content.confidence, 'high', 'confidence stays a string');
+
+  const chain = store.chain(req.id);
+  assert.ok(chain);
+  const ids = chain.nodes.map((n) => n.id);
+  assert.ok(written.every((f) => ids.includes(f.id)), 'both findings are in the chain');
+  assert.ok(
+    chain.edges.some((e) => e.fromArtifactId === written[0].id && e.toArtifactId === req.id && e.relation === 'derived_from'),
+  );
+});
+
+test('audit_submit stamps promptVersion from the rubric, ignoring the caller', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+
+  const [finding] = submitFindings(store, {
+    requirementId: req.id,
+    findings: [vagueFinding()],
+    provenance: ai,
+  });
+
+  assert.equal(finding.provenance.promptVersion, 'ambiguity/1');
+  assert.equal(finding.provenance.model, 'claude-opus-5', "model is still the caller's");
+});
+
+test('audit_submit rejects an unknown rule id and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  const before = countArtifacts(store);
+
+  assert.throws(
+    () => submitFindings(store, { requirementId: req.id, findings: [vagueFinding({ category: 'AMB-TYPO' })], provenance: ai }),
+    /unknown rule "AMB-TYPO"/,
+  );
+  assert.equal(countArtifacts(store), before, 'store untouched');
+});
+
+test('audit_submit rejects a quote absent from the requirement and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  const before = countArtifacts(store);
+
+  assert.throws(
+    () => submitFindings(store, { requirementId: req.id, findings: [vagueFinding({ quote: 'blazingly fast' })], provenance: ai }),
+    /quote not found in requirement text: "blazingly fast"/,
+  );
+  assert.equal(countArtifacts(store), before, 'store untouched');
+});
+
+test('audit_submit is all-or-nothing when one finding of several is invalid', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  const before = countArtifacts(store);
+
+  assert.throws(
+    () =>
+      submitFindings(store, {
+        requirementId: req.id,
+        findings: [vagueFinding(), vagueFinding({ quote: 'never written here' })],
+        provenance: ai,
+      }),
+    /quote not found/,
+  );
+  assert.equal(countArtifacts(store), before, 'the valid finding was not written either');
+});
+
+test('audit_submit rejects an empty findings list', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+
+  assert.throws(() => submitFindings(store, { requirementId: req.id, findings: [], provenance: ai }), /must not be empty/);
+});
+
+test('audit_submit still enforces the AI provenance rule', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  const before = countArtifacts(store);
+
+  assert.throws(() =>
+    submitFindings(store, {
+      requirementId: req.id,
+      findings: [vagueFinding()],
+      // producer 'ai' with no model. This type-checks — `model` is optional on the object —
+      // and is rejected at runtime by the refinement in schema.ts. No cast needed.
+      provenance: { producer: 'ai' },
+    }),
+  );
+  assert.equal(countArtifacts(store), before);
 });

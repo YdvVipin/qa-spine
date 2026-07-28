@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { TraceStore } from './trace/store.ts';
+import type { Artifact, Provenance } from './trace/schema.ts';
 
 /**
  * A rubric is published, versioned data — the thing a team argues about in review.
@@ -83,4 +84,59 @@ export function auditRequirement(store: TraceStore, requirementId: string) {
     rubric: loadRubric(),
     instructions: INSTRUCTIONS,
   };
+}
+
+/** The shape a finding must arrive in. Deliberately no `suggestedRewrite`: this phase asks, it does not rewrite. */
+export const AuditFinding = z.object({
+  category: z.string().min(1).describe('A rule id from the rubric returned by audit_requirement.'),
+  quote: z.string().min(1).describe('Copied verbatim from the requirement text.'),
+  question: z.string().min(1).describe('What a human needs to answer to remove the ambiguity.'),
+  confidence: z.enum(['high', 'medium', 'low', 'unknown']),
+  severity: z.enum(['high', 'medium', 'low']).optional(),
+});
+export type AuditFinding = z.infer<typeof AuditFinding>;
+
+/**
+ * Validates every finding before writing any of them. The store is append-only, so a
+ * half-written batch could never be cleaned up — a partially valid submission must be
+ * rejected whole.
+ *
+ * ponytail: re-auditing a requirement appends duplicate findings; there is no dedup.
+ * Fine while audits are human-triggered one at a time. If that changes, skip findings
+ * whose (category, quote) pair already exists on the requirement.
+ */
+export function submitFindings(
+  store: TraceStore,
+  input: { requirementId: string; findings: AuditFinding[]; provenance: Provenance },
+): Artifact[] {
+  const requirement = requirementFor(store, input.requirementId);
+  if (!input.findings.length) throw new Error('findings must not be empty');
+
+  const rubric = loadRubric();
+  const ids = new Set(rubric.rules.map((r) => r.id));
+
+  for (const f of input.findings) {
+    if (!ids.has(f.category)) {
+      throw new Error(
+        `unknown rule "${f.category}" — rubric ${rubric.version} defines: ${[...ids].join(', ')}`,
+      );
+    }
+    // The Inspector already runs this comparison at render time to flag a bad quote.
+    // Running it at write time makes a hallucinated quote unrecordable instead.
+    if (!requirement.text.includes(f.quote)) {
+      throw new Error(`quote not found in requirement text: "${f.quote}"`);
+    }
+  }
+
+  return input.findings.map((f) =>
+    store.record({
+      type: 'finding',
+      sourceRef: requirement.sourceRef,
+      content: { ...f },
+      // promptVersion is the one provenance field the server can honestly author, and
+      // it is what makes a rubric edit measurable against the exported review labels.
+      provenance: { ...input.provenance, promptVersion: rubric.version },
+      links: [{ to: requirement.id, relation: 'derived_from' }],
+    }),
+  );
 }
