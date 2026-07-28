@@ -256,11 +256,17 @@ async function chainView(id) {
           const unresolved =
             n.type === 'finding' &&
             !edges.some((e) => e.toArtifactId === n.id && e.relation === 'supersedes');
+          // An answer produced by AI is marked in the graph, not just in its detail panel:
+          // an agent resolving its own audit finding should be visible at a glance.
+          const aiAnswer = n.type === 'answer' && n.provenance.producer === 'ai';
           const card = h(
             'a',
             {
               className:
-                'node' + (n.id === chain.root.id ? ' root' : '') + (unresolved ? ' unresolved' : ''),
+                'node' +
+                (n.id === chain.root.id ? ' root' : '') +
+                (unresolved ? ' unresolved' : '') +
+                (aiAnswer ? ' ai-answer' : ''),
               href: `#/a/${n.id}`,
             },
             h('span', { className: 'id' }, n.sourceRef ?? n.id),
@@ -327,13 +333,122 @@ async function chainView(id) {
   addEventListener('resize', draw);
 }
 
+// --------------------------------------------------------------- audit queue
+
+/** One open question: the rule that fired, the quote in context, and a box to answer it. */
+function questionCard(q) {
+  const box = h('textarea', { placeholder: 'answer…', rows: 2 });
+  const status = h('span', { className: 'said' });
+
+  const submit = async () => {
+    const res = await fetch('/api/answer', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ findingId: q.findingId, answer: box.value }),
+    });
+    if (res.ok) return route(); // answered questions leave the queue
+    status.textContent = (await res.json()).error ?? 'failed';
+    status.className = 'said verdict-bad';
+  };
+
+  // Show the quote inside its surrounding text, so a mis-quote is as obvious here as in
+  // the detail view. Windowed to 40 characters either side to keep cards scannable.
+  const text = q.requirement?.text ?? '';
+  const at = q.quote ? text.indexOf(q.quote) : -1;
+  const context =
+    at === -1
+      ? h('span', { className: 'flag' }, q.quote ? `⚠ "${q.quote}" not found in source` : '—')
+      : h(
+          'span',
+          {},
+          (at > 40 ? '…' : '') + text.slice(Math.max(0, at - 40), at),
+          h('mark', {}, q.quote),
+          text.slice(at + q.quote.length, at + q.quote.length + 40),
+        );
+
+  return h(
+    'div',
+    { className: 'q' },
+    h(
+      'div',
+      { className: 'q-top' },
+      h('span', { className: 'q-rule' }, q.category ?? '—'),
+      h('span', {}, `conf ${q.confidence ?? '—'}`),
+      h('a', { className: 'q-src', href: `#/a/${q.findingId}` },
+        q.requirement?.sourceRef ?? q.findingId),
+    ),
+    h('div', { className: 'q-quote' }, context),
+    h('div', { className: 'q-ask' }, q.question ?? ''),
+    h('div', { className: 'q-answer' },
+      box,
+      h('button', { className: 'good', textContent: 'Record answer', onclick: submit }),
+      status),
+  );
+}
+
+/** An answered question. Producer and model are shown because that is the only safeguard
+    against an agent quietly answering its own audit. */
+function answeredCard(a) {
+  const p = a.provenance;
+  return h(
+    'div',
+    { className: 'q done' },
+    h(
+      'div',
+      { className: 'q-top' },
+      h('span', { className: 'producer-' + p.producer }, p.producer),
+      p.model ? h('span', {}, p.model) : null,
+      h('a', { className: 'q-src', href: `#/a/${a.id}` }, a.sourceRef ?? a.id),
+      h('span', {}, ago(a.createdAt)),
+    ),
+    h('div', { className: 'q-ask' }, summarise(a)),
+  );
+}
+
+async function auditView(show) {
+  const showing = show === 'answered' ? 'answered' : 'open';
+  const filters = h(
+    'div',
+    { className: 'filters' },
+    ['open', 'answered'].map((f) =>
+      h('button', {
+        textContent: f,
+        ariaPressed: String(showing === f),
+        onclick: () => (location.hash = `#/audit?show=${f}`),
+      }),
+    ),
+  );
+
+  if (showing === 'answered') {
+    const { artifacts } = await get('/api/artifacts?type=answer');
+    crumbs.replaceChildren(`${artifacts.length} answered`);
+    return view.replaceChildren(
+      filters,
+      artifacts.length
+        ? h('div', { className: 'queue' }, artifacts.map(answeredCard))
+        : h('p', { className: 'empty' }, 'Nothing answered yet.'),
+    );
+  }
+
+  const { open } = await get('/api/open');
+  crumbs.replaceChildren(`${open.length} question${open.length === 1 ? '' : 's'} open`);
+  view.replaceChildren(
+    filters,
+    open.length
+      ? h('div', { className: 'queue' }, open.map(questionCard))
+      : h('p', { className: 'empty' }, 'Nothing to answer.'),
+  );
+}
+
 // ------------------------------------------------------------------ routing
 
 function route() {
+  const query = new URLSearchParams(location.hash.split('?')[1] ?? '');
   const [, path, id] = location.hash.match(/^#\/(a|c)\/(.+)$/) ?? [];
   if (path === 'a') return detailView(decodeURIComponent(id));
   if (path === 'c') return chainView(decodeURIComponent(id));
-  return listView(new URLSearchParams(location.hash.split('?')[1] ?? '').get('type'));
+  if (location.hash.startsWith('#/audit')) return auditView(query.get('show'));
+  return listView(query.get('type'));
 }
 
 // Cross-fade view swaps with the native View Transitions API. route() is async for the

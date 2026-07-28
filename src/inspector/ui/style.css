@@ -124,6 +124,49 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
 .legend { display: flex; flex-wrap: wrap; gap: 0.9rem; color: var(--dim); margin-top: 0.5rem; font-size: 12px; }
 .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 4px; }
 
+/* --- audit queue --- */
+.navlink { color: var(--dim); }
+.navlink:hover { color: var(--accent); }
+.queue { display: flex; flex-direction: column; gap: 0.75rem; }
+.q {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid #e0af68;
+  border-radius: 5px;
+  padding: 0.65rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.q.done { border-left-color: var(--good); }
+.q-top { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 12px; color: var(--dim); }
+.q-rule { color: #e0af68; }
+.q-src { margin-left: auto; }
+.q-quote { font-size: 13px; color: var(--dim); border-left: 2px solid var(--line); padding-left: 0.6rem; overflow-wrap: anywhere; }
+.q-ask { line-height: 1.5; }
+.q-answer { display: flex; gap: 0.5rem; align-items: stretch; flex-wrap: wrap; }
+.q-answer textarea {
+  flex: 1 1 18rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem;
+  font: inherit;
+  resize: vertical;
+}
+.q-answer button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font: inherit;
+}
+.q-answer button:hover { border-color: var(--good); color: var(--good); }
+.node.ai-answer { border-left-color: var(--ai); }
+
 /* --- motion --- */
 /* Short and colour-only. An instrument that slides things around while you read them
    is harder to judge output with, not easier. */
