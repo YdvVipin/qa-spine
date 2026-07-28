@@ -181,3 +181,46 @@ export function openQuestions(store: TraceStore, requirementId?: string) {
   });
   return { open: requirementId ? open.filter((q) => q.requirement?.id === requirementId) : open };
 }
+
+/**
+ * Records a human's or an agent's answer to an open question. The `supersedes` edge is what
+ * retires the finding — the chain view already treats a finding with nothing superseding it
+ * as unresolved, so this needs no new concept.
+ *
+ * Provenance is recorded exactly as given. Unlike `submitFindings`, the server does not own
+ * this artifact and has no rubric version to stamp: an AI answer stays visibly an AI answer.
+ */
+export function recordAnswer(
+  store: TraceStore,
+  input: { findingId: string; answer: string; provenance: Provenance },
+): Artifact {
+  const finding = store.get(input.findingId);
+  if (!finding) throw new Error(`no artifact with id ${input.findingId}`);
+  if (finding.type !== 'finding') {
+    throw new Error(`artifact ${input.findingId} is a ${finding.type}, not a finding`);
+  }
+
+  const answer = input.answer.trim();
+  if (!answer) throw new Error('answer must not be blank');
+
+  const resolver = store.edgesTo(input.findingId).find((e) => e.relation === 'supersedes');
+  if (resolver) {
+    throw new Error(
+      `finding ${input.findingId} is already resolved by ${resolver.fromArtifactId} — ` +
+        'supersede that answer instead of adding another',
+    );
+  }
+
+  const requirement = requirementOf(store, input.findingId);
+  return store.record({
+    type: 'answer',
+    sourceRef: requirement?.sourceRef ?? finding.sourceRef,
+    content: { text: answer },
+    provenance: input.provenance,
+    links: [
+      { to: input.findingId, relation: 'supersedes' },
+      // A finding without a parent requirement is still answerable.
+      ...(requirement ? [{ to: requirement.id, relation: 'derived_from' as const }] : []),
+    ],
+  });
+}

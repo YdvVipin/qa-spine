@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TraceStore } from '../src/trace/store.ts';
-import { openQuestions } from '../src/audit.ts';
+import { openQuestions, recordAnswer } from '../src/audit.ts';
 
 const human = { producer: 'human' as const };
 const ai = { producer: 'ai' as const, model: 'claude-opus-5', promptVersion: 'ambiguity/1' };
@@ -159,4 +159,111 @@ test('openQuestions keeps a parentless finding, with requirement null', () => {
   assert.equal(open.length, 1, 'a broken edge must not hide work');
   assert.equal(open[0].findingId, orphan.id);
   assert.equal(open[0].requirement, null);
+});
+
+const countArtifacts = (store: TraceStore) => store.list(undefined, 1e9).length;
+
+test('recordAnswer links to both the finding and the requirement, and closes the question', () => {
+  const store = new TraceStore(':memory:');
+  const { req, finding } = seed(store);
+
+  const answer = recordAnswer(store, {
+    findingId: finding.id,
+    answer: 'p95 under 1.5s on 3G Fast, at first contentful paint.',
+    provenance: human,
+  });
+
+  assert.equal(answer.type, 'answer');
+  assert.equal(answer.content.text, 'p95 under 1.5s on 3G Fast, at first contentful paint.');
+  assert.equal(answer.sourceRef, 'PROJ-114');
+
+  const edges = store.edgesFrom(answer.id);
+  assert.ok(
+    edges.some((e) => e.toArtifactId === finding.id && e.relation === 'supersedes'),
+    'supersedes the finding',
+  );
+  assert.ok(
+    edges.some((e) => e.toArtifactId === req.id && e.relation === 'derived_from'),
+    'derived from the requirement',
+  );
+  assert.deepEqual(openQuestions(store).open, [], 'the question leaves the queue');
+});
+
+test('an answered finding reads as resolved through chain()', () => {
+  const store = new TraceStore(':memory:');
+  const { req, finding } = seed(store);
+  recordAnswer(store, { findingId: finding.id, answer: 'Under 1.5s.', provenance: human });
+
+  const chain = store.chain(req.id);
+  assert.ok(chain);
+  // This is exactly the test the chain view runs to decide whether to render a finding red.
+  const stillUnresolved = !chain.edges.some(
+    (e) => e.toArtifactId === finding.id && e.relation === 'supersedes',
+  );
+  assert.equal(stillUnresolved, false, 'the chain view will now render it resolved');
+});
+
+test('recordAnswer rejects a blank or whitespace-only answer and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const { finding } = seed(store);
+  const before = countArtifacts(store);
+
+  assert.throws(
+    () => recordAnswer(store, { findingId: finding.id, answer: '', provenance: human }),
+    /answer must not be blank/,
+  );
+  assert.throws(
+    () => recordAnswer(store, { findingId: finding.id, answer: '   \n ', provenance: human }),
+    /answer must not be blank/,
+  );
+  assert.equal(countArtifacts(store), before, 'store untouched');
+});
+
+test('recordAnswer rejects an id that is not a finding, and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const { req } = seed(store);
+  const before = countArtifacts(store);
+
+  assert.throws(
+    () => recordAnswer(store, { findingId: req.id, answer: 'Under 1.5s.', provenance: human }),
+    /is a requirement, not a finding/,
+  );
+  assert.throws(
+    () => recordAnswer(store, { findingId: 'nope_123', answer: 'Under 1.5s.', provenance: human }),
+    /no artifact with id nope_123/,
+  );
+  assert.equal(countArtifacts(store), before, 'store untouched');
+});
+
+test('recordAnswer refuses to double-answer, naming the answer to supersede', () => {
+  const store = new TraceStore(':memory:');
+  const { finding } = seed(store);
+  const first = recordAnswer(store, {
+    findingId: finding.id,
+    answer: 'Under 1.5s.',
+    provenance: human,
+  });
+  const before = countArtifacts(store);
+
+  assert.throws(
+    () => recordAnswer(store, { findingId: finding.id, answer: 'Actually 2s.', provenance: human }),
+    new RegExp(`already resolved by ${first.id}`),
+  );
+  assert.equal(countArtifacts(store), before, 'store untouched');
+});
+
+test('recordAnswer keeps AI provenance exactly as given', () => {
+  const store = new TraceStore(':memory:');
+  const { finding } = seed(store);
+
+  const answer = recordAnswer(store, {
+    findingId: finding.id,
+    answer: 'p95 under 1.5s.',
+    provenance: { producer: 'ai', model: 'claude-opus-5', promptVersion: 'answer/1' },
+  });
+
+  assert.equal(answer.provenance.producer, 'ai');
+  assert.equal(answer.provenance.model, 'claude-opus-5');
+  // Unlike audit_submit, the server does not own an answer and must not restamp this.
+  assert.equal(answer.provenance.promptVersion, 'answer/1');
 });
