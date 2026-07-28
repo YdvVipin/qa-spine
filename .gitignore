@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.qa-spine/
+*.db
+
+# Vendored third-party skill (ui-ux-pro-max), installed via `npx uipro-cli init`.
+.agent/
+
+# Scratch workspace for subagent-driven plan execution.
+.superpowers/

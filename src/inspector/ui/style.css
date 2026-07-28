@@ -1,0 +1,141 @@
+/* Deliberately plain. This is an instrument for judging agent output, not a dashboard. */
+:root {
+  --bg: #16161e;
+  --panel: #1e1e2a;
+  --line: #2f3347;
+  --fg: #c8cee0;
+  --dim: #7f88a8;
+  --accent: #7aa2f7;
+  --bad: #f7768e;
+  --good: #9ece6a;
+  --ai: #bb9af7;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
+}
+.brand { font-weight: 700; color: var(--fg); }
+.brand span { color: var(--dim); font-weight: 400; }
+#crumbs { color: var(--dim); }
+main { padding: 1.25rem; }
+
+/* --- list --- */
+.filters { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+.filters button {
+  background: var(--panel);
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  cursor: pointer;
+  font: inherit;
+}
+.filters button[aria-pressed='true'] { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-weight: 400; text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; }
+tbody tr:hover { background: var(--panel); }
+.type { color: var(--accent); }
+.producer-ai { color: var(--ai); }
+.producer-human { color: var(--dim); }
+.empty { color: var(--dim); padding: 2rem 0; }
+
+/* --- detail --- */
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0.9rem 1rem; }
+.panel h2 { margin: 0 0 0.6rem; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 400; }
+.panel pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 0.9rem; margin: 0; }
+dt { color: var(--dim); }
+dd { margin: 0; word-break: break-all; }
+mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; border-radius: 2px; }
+
+/* --- review --- */
+.review { margin-top: 1rem; display: flex; gap: 0.5rem; align-items: stretch; flex-wrap: wrap; }
+.review textarea {
+  flex: 1 1 260px;
+  min-height: 2.4rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem;
+  font: inherit;
+  resize: vertical;
+}
+.review button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font: inherit;
+}
+.review button.good:hover { border-color: var(--good); color: var(--good); }
+.review button.bad:hover { border-color: var(--bad); color: var(--bad); }
+.said { color: var(--dim); align-self: center; }
+.verdict-good { color: var(--good); }
+.verdict-bad { color: var(--bad); }
+
+/* --- chain --- */
+#graph { position: relative; overflow-x: auto; padding-bottom: 1rem; }
+.lanes { display: flex; gap: 2.5rem; align-items: flex-start; position: relative; width: max-content; min-width: 100%; }
+.lane { display: flex; flex-direction: column; gap: 1rem; width: 200px; flex: 0 0 200px; }
+.lane h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 400; }
+.node {
+  position: relative;
+  z-index: 1;
+  display: block;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 5px;
+  padding: 0.5rem 0.7rem;
+  color: var(--fg);
+}
+.node:hover { text-decoration: none; border-color: var(--accent); }
+.node.root { outline: 1px solid var(--accent); }
+.node.unresolved { border-left-color: var(--bad); }
+.node .id { color: var(--dim); font-size: 11px; }
+.node .summary { display: block; margin-top: 0.2rem; overflow-wrap: anywhere; }
+.node .flag { color: var(--bad); font-size: 11px; }
+/* Sized in px by app.js to match the scrollable content; a CSS size here would rescale
+   the viewBox and pull every edge endpoint off its card. */
+#wires { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 0.9rem; color: var(--dim); margin-top: 0.5rem; font-size: 12px; }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 4px; }
+
+/* --- motion --- */
+/* Short and colour-only. An instrument that slides things around while you read them
+   is harder to judge output with, not easier. */
+.node, .filters button, .review button, .review textarea, tbody tr {
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.review textarea:focus-visible { outline: none; border-color: var(--accent); }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 140ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::view-transition-old(root), ::view-transition-new(root) {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+  }
+}
