@@ -67,8 +67,9 @@ file, one CSS file, one vanilla-JS module. Four views:
   shown in context and a box to answer it. Answering appends an `answer` that supersedes the
   finding, so the chain view stops showing it red. The empty state is the goal.
 
-Every AI artifact gets a 👍/👎 and a free-text note. That review is the Inspector's only
-write, and it is human-authored. Export the accumulated labels:
+Every AI artifact gets a 👍/👎 and a free-text note. The Inspector has two human-authored
+writes: this review, and audit answers. Agents answer through `audit_answer` instead,
+recording their provenance. Export the accumulated labels:
 
 ```bash
 node dist/server.js review-export > labels.jsonl
