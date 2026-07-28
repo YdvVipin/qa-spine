@@ -9,6 +9,7 @@
   --bad: #f7768e;
   --good: #9ece6a;
   --ai: #bb9af7;
+  --warn: #e0af68;
 }
 * { box-sizing: border-box; }
 body {
@@ -131,7 +132,7 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
 .q {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-left: 3px solid #e0af68;
+  border-left: 3px solid var(--warn);
   border-radius: 5px;
   padding: 0.65rem 0.85rem;
   display: flex;
@@ -140,7 +141,7 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
 }
 .q.done { border-left-color: var(--good); }
 .q-top { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 12px; color: var(--dim); }
-.q-rule { color: #e0af68; }
+.q-rule { color: var(--warn); }
 .q-src { margin-left: auto; }
 .q-quote { font-size: 13px; color: var(--dim); border-left: 2px solid var(--line); padding-left: 0.6rem; overflow-wrap: anywhere; }
 .q-ask { line-height: 1.5; }
@@ -170,7 +171,7 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
 /* --- motion --- */
 /* Short and colour-only. An instrument that slides things around while you read them
    is harder to judge output with, not easier. */
-.node, .filters button, .review button, .review textarea, tbody tr {
+.node, .filters button, .review button, .review textarea, .q-answer button, .q-answer textarea, tbody tr {
   transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 .review textarea:focus-visible { outline: none; border-color: var(--accent); }
