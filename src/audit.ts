@@ -97,13 +97,17 @@ export const AuditFinding = z.object({
 export type AuditFinding = z.infer<typeof AuditFinding>;
 
 /**
- * Validates every finding before writing any of them. The store is append-only, so a
- * half-written batch could never be cleaned up — a partially valid submission must be
- * rejected whole.
+ * Validates every finding and requirement reference before writing any of them. Zod
+ * parsing strips unknown keys (e.g., `suggestedRewrite`) and rejects bad enum values.
+ * Validation is all-or-nothing: if any finding fails, no artifacts are recorded.
  *
  * ponytail: re-auditing a requirement appends duplicate findings; there is no dedup.
  * Fine while audits are human-triggered one at a time. If that changes, skip findings
  * whose (category, quote) pair already exists on the requirement.
+ *
+ * ponytail: each store.record() is its own transaction, so a mid-batch failure (e.g.,
+ * SQLITE_FULL) leaves earlier findings permanently recorded. To make batch writes truly
+ * atomic, add `store.recordMany()` and refactor to batch BEGIN/COMMIT at the store level.
  */
 export function submitFindings(
   store: TraceStore,
@@ -112,10 +116,12 @@ export function submitFindings(
   const requirement = requirementFor(store, input.requirementId);
   if (!input.findings.length) throw new Error('findings must not be empty');
 
+  const findings = z.array(AuditFinding).parse(input.findings);
+
   const rubric = loadRubric();
   const ids = new Set(rubric.rules.map((r) => r.id));
 
-  for (const f of input.findings) {
+  for (const f of findings) {
     if (!ids.has(f.category)) {
       throw new Error(
         `unknown rule "${f.category}" — rubric ${rubric.version} defines: ${[...ids].join(', ')}`,
@@ -128,7 +134,7 @@ export function submitFindings(
     }
   }
 
-  return input.findings.map((f) =>
+  return findings.map((f) =>
     store.record({
       type: 'finding',
       sourceRef: requirement.sourceRef,

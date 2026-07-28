@@ -182,14 +182,16 @@ test('audit_submit still enforces the AI provenance rule', () => {
   const req = seedRequirement(store);
   const before = countArtifacts(store);
 
-  assert.throws(() =>
-    submitFindings(store, {
-      requirementId: req.id,
-      findings: [vagueFinding()],
-      // producer 'ai' with no model. This type-checks — `model` is optional on the object —
-      // and is rejected at runtime by the refinement in schema.ts. No cast needed.
-      provenance: { producer: 'ai' },
-    }),
+  assert.throws(
+    () =>
+      submitFindings(store, {
+        requirementId: req.id,
+        findings: [vagueFinding()],
+        // producer 'ai' with no model. This type-checks — `model` is optional on the object —
+        // and is rejected at runtime by the refinement in schema.ts. No cast needed.
+        provenance: { producer: 'ai' },
+      }),
+    /model and promptVersion/,
   );
   assert.equal(countArtifacts(store), before);
 });
