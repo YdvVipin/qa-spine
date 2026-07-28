@@ -153,6 +153,18 @@ test('audit_submit rejects a quote absent from the requirement and writes nothin
   assert.equal(countArtifacts(store), before, 'store untouched');
 });
 
+test('audit_submit rejects a whitespace-only quote and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  const before = countArtifacts(store);
+
+  assert.throws(
+    () => submitFindings(store, { requirementId: req.id, findings: [vagueFinding({ quote: ' ' })], provenance: ai }),
+    /quote is blank: " "/,
+  );
+  assert.equal(countArtifacts(store), before, 'store untouched');
+});
+
 test('audit_submit is all-or-nothing when one finding of several is invalid', () => {
   const store = new TraceStore(':memory:');
   const req = seedRequirement(store);

@@ -76,7 +76,8 @@ function requirementFor(store: TraceStore, id: string) {
  * Makes no model call. This tool is a librarian: it hands over the text and the rules.
  *
  * ponytail: returns the whole rubric on every call. Fine at four rules; if rubrics grow
- * past what is comfortable in a tool result, return only rules whose triggers appear.
+ * past what is comfortable in a tool result, split the rubric file by concern (e.g.
+ * ambiguity vs. testability) and let the caller ask for one, or paginate `rules`.
  */
 export function auditRequirement(store: TraceStore, requirementId: string) {
   return {
@@ -126,6 +127,9 @@ export function submitFindings(
       throw new Error(
         `unknown rule "${f.category}" — rubric ${rubric.version} defines: ${[...ids].join(', ')}`,
       );
+    }
+    if (!f.quote.trim()) {
+      throw new Error(`quote is blank: "${f.quote}"`);
     }
     // The Inspector already runs this comparison at render time to flag a bad quote.
     // Running it at write time makes a hallucinated quote unrecordable instead.

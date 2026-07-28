@@ -5,8 +5,9 @@ An MCP server that exposes QA-lifecycle agents to any MCP-capable client, over a
 results → release verdict — and every AI-produced artifact records which model and which
 prompt version made it.
 
-Self-hostable. Nothing leaves your machine except calls to your own configured LLM endpoint.
-The server proposes; it never mutates JIRA, repos or CI without an explicit approval call.
+Self-hostable, and nothing leaves your machine: the server never calls a model itself, it
+hands requirements and rubrics to the calling agent and validates what comes back. The
+server proposes; it never mutates JIRA, repos or CI without an explicit approval call.
 
 **Status: Phases 1, 1.5 and 2 complete.** The trace spine, the Inspector, and the first
 agent — an ambiguity audit against a published rubric — all work.
@@ -75,7 +76,7 @@ made the agents better or worse.
 
 ## The trace store
 
-Artifacts are `requirement | finding | test_case | test_run | defect | verdict | answer`. Edges are
+Artifacts are `requirement | finding | test_case | test_run | defect | verdict | review | answer`. Edges are
 `derived_from | tests | covers | verifies | contradicts | supersedes`, always directed from
 the newer artifact to the older one.
 
