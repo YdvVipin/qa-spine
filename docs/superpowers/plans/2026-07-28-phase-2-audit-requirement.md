@@ -20,7 +20,7 @@
 - **Finding content field names are fixed by existing data:** `{ category, quote, question, confidence }`, with `confidence` a **string** (`'high' | 'medium' | 'low' | 'unknown'`), never a number. `category` holds the rubric rule id.
 - **`promptVersion` is authored by the server** from the loaded rubric's `version`, overriding whatever the caller supplied.
 - **Error messages name the offending value.** The consumer is a model that must correct and retry.
-- **Git:** this repo currently has **zero commits** and all files are untracked. The commit steps below assume the user has made an initial commit first; if they have not, stage only the files each task names.
+- **Git:** work happens on the `phase-2-audit` branch, off initial commit `3abdaa6`. Stage only the files each task names — never `git add -A`. `.agent/` and `.superpowers/` are gitignored scratch and must never be committed.
 
 ---
 
