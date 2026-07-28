@@ -9,8 +9,8 @@ Self-hostable, and nothing leaves your machine: the server never calls a model i
 hands requirements and rubrics to the calling agent and validates what comes back. The
 server proposes; it never mutates JIRA, repos or CI without an explicit approval call.
 
-**Status: Phases 1, 1.5 and 2 complete.** The trace spine, the Inspector, and the first
-agent — an ambiguity audit against a published rubric — all work.
+**Status: Phases 1, 1.5, 2 and 2.5 complete.** The trace spine, the Inspector, the ambiguity
+audit, and the queue for answering what it finds.
 
 ## Requirements
 
@@ -42,6 +42,8 @@ The trace store is a SQLite file at `.qa-spine/trace.db`, overridable with `QA_S
 | `trace_query` | Given an artifact ID, returns the full upstream/downstream chain. Without an ID, lists recent artifacts. |
 | `audit_requirement` | Returns a requirement plus the published ambiguity rubric, for the calling agent to reason over. Makes no model call. |
 | `audit_submit` | Records ambiguity findings, rejecting any that cite an unknown rule or a quote absent from the requirement. |
+| `audit_open` | Lists ambiguity questions still waiting on an answer, each with the requirement text needed to answer it. |
+| `audit_answer` | Records an answer. The answer supersedes the finding, which retires it. |
 
 ## The Inspector
 
@@ -52,7 +54,7 @@ npm run inspect              # → http://127.0.0.1:4700
 
 The Inspector is an **instrument for judging whether agent output is any good**, not a
 product dashboard. It is read-only, loopback-only, has no auth and no build step: one HTML
-file, one CSS file, one vanilla-JS module. Three views:
+file, one CSS file, one vanilla-JS module. Four views:
 
 - **Artifact list** — everything in the store, newest first, filterable by type, showing
   producer, model and confidence at a glance.
@@ -61,6 +63,9 @@ file, one CSS file, one vanilla-JS module. Three views:
   provenance alongside.
 - **Chain view** — requirement → findings → tests → runs → verdict, laid out left to right,
   edges coloured by relation. Findings that nothing has resolved render red.
+- **Audit queue** — every question phase 2 raised that nobody has answered, with the quote
+  shown in context and a box to answer it. Answering appends an `answer` that supersedes the
+  finding, so the chain view stops showing it red. The empty state is the goal.
 
 Every AI artifact gets a 👍/👎 and a free-text note. That review is the Inspector's only
 write, and it is human-authored. Export the accumulated labels:
@@ -103,14 +108,20 @@ to the calling agent; `audit_submit` takes what comes back and refuses anything 
 cites an unknown rule or quotes text that is not in the requirement. A hallucinated quote
 cannot enter the store.
 
+An agent can answer its own audit questions through `audit_answer`, and nothing prevents it.
+Provenance is the safeguard rather than a lock: the queue shows the producer and model of
+every answered question, and an AI-authored answer is drawn in the chain view in the colour
+used for AI artifacts. If you need approval before an AI answer counts as resolving a
+finding, the `approvedBy` field on every artifact's provenance is the place to build it.
+
 ## Roadmap
 
 - **Phase 1 — trace spine.** Done.
 - **Phase 1.5 — Inspector.** Done.
 - **Phase 2 — `audit_requirement`.** Ambiguity audit against a published JSON rubric.
   Emits questions for a human, never rewritten requirements. Done.
-- **Phase 2.5 — audit queue.** An Inspector view for answering those questions, where an
-  answer supersedes the finding it resolves.
+- **Phase 2.5 — audit queue.** An Inspector view and two MCP tools for answering those
+  questions, where an answer supersedes the finding it resolves. Done.
 - **Phase 3 — `assess_release_risk`.** One-page release brief with a verdict, which can
   surface a requirement-stage finding that was never resolved and touches a changed area.
 - **Phase 4 — `generate_fixtures`.** Schema-validated test data with locale packs.
