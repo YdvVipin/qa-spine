@@ -10,6 +10,8 @@ export const ArtifactType = z.enum([
   'verdict',
   /** A human's thumbs up/down on an AI artifact, captured by the Inspector. */
   'review',
+  /** A human's reply to a finding's question. Supersedes the finding it answers. */
+  'answer',
 ]);
 
 /**
