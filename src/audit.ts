@@ -150,3 +150,34 @@ export function submitFindings(
     }),
   );
 }
+
+/** The requirement a finding came from, if that edge is intact. */
+function requirementOf(store: TraceStore, findingId: string): Artifact | undefined {
+  return store
+    .edgesFrom(findingId)
+    .filter((e) => e.relation === 'derived_from')
+    .map((e) => store.get(e.toArtifactId))
+    .find((a) => a?.type === 'requirement');
+}
+
+/**
+ * Every question still waiting on an answer, each carrying enough of its requirement to be
+ * answered without a second call. A finding whose parent requirement is missing still
+ * appears, with `requirement: null` — a broken edge must not hide work from the queue.
+ */
+export function openQuestions(store: TraceStore, requirementId?: string) {
+  const open = store.openFindings().map((f) => {
+    const parent = requirementOf(store, f.id);
+    return {
+      findingId: f.id,
+      category: f.content.category ?? null,
+      quote: f.content.quote ?? null,
+      question: f.content.question ?? null,
+      confidence: f.content.confidence ?? null,
+      requirement: parent
+        ? { id: parent.id, sourceRef: parent.sourceRef, text: String(parent.content.text ?? '') }
+        : null,
+    };
+  });
+  return { open: requirementId ? open.filter((q) => q.requirement?.id === requirementId) : open };
+}
