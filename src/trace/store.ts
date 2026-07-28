@@ -146,10 +146,21 @@ export class TraceStore {
    * Findings nothing has superseded — the audit queue's worklist. Asked in SQL rather than
    * by listing every finding and filtering in JS, which would be right only at today's size.
    *
+   * `requirementId`, when given, filters in the same query rather than after it: filtering
+   * a capped, recency-ordered result in JS could drop a genuinely-open finding on the
+   * requested requirement just because enough newer findings on *other* requirements filled
+   * the window first.
+   *
    * ponytail: `limit` is the only paging. A queue a human works down does not need more;
    * if one ever holds more open findings than this, it needs real paging, not a bigger number.
    */
-  openFindings(limit = 500): Artifact[] {
+  openFindings(limit = 500, requirementId?: string): Artifact[] {
+    const requirementFilter = requirementId
+      ? `AND EXISTS (
+            SELECT 1 FROM edges d WHERE d.from_id = a.id AND d.relation = 'derived_from' AND d.to_id = ?
+          )`
+      : '';
+    const params = requirementId ? [requirementId, limit] : [limit];
     const rows = this.db
       .prepare(
         `SELECT * FROM artifacts a
@@ -157,10 +168,11 @@ export class TraceStore {
             AND NOT EXISTS (
               SELECT 1 FROM edges e WHERE e.to_id = a.id AND e.relation = 'supersedes'
             )
+            ${requirementFilter}
           ORDER BY a.created_at DESC
           LIMIT ?`,
       )
-      .all(limit);
+      .all(...params);
     return (rows as Row[]).map(toArtifact);
   }
 

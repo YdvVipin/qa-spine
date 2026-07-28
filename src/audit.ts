@@ -166,7 +166,7 @@ function requirementOf(store: TraceStore, findingId: string): Artifact | undefin
  * appears, with `requirement: null` — a broken edge must not hide work from the queue.
  */
 export function openQuestions(store: TraceStore, requirementId?: string) {
-  const open = store.openFindings().map((f) => {
+  const open = store.openFindings(500, requirementId).map((f) => {
     const parent = requirementOf(store, f.id);
     return {
       findingId: f.id,
@@ -179,7 +179,7 @@ export function openQuestions(store: TraceStore, requirementId?: string) {
         : null,
     };
   });
-  return { open: requirementId ? open.filter((q) => q.requirement?.id === requirementId) : open };
+  return { open };
 }
 
 /**
@@ -203,11 +203,19 @@ export function recordAnswer(
   const answer = input.answer.trim();
   if (!answer) throw new Error('answer must not be blank');
 
+  // ponytail: check-then-write, reachable across processes, not just within one — `npm run
+  // inspect` and the MCP server each open the same dbPath() as a separate process, so two
+  // processes can both pass this check before either writes, leaving two `supersedes` edges
+  // on one finding. `trace_record` also bypasses this guard entirely, since it writes
+  // straight to the store. Upgrade path: a partial unique index —
+  // `CREATE UNIQUE INDEX ... ON edges(to_id) WHERE relation = 'supersedes'` — deliberately
+  // not added here, since it would hard-fail on any existing store that already holds two
+  // `supersedes` edges on one finding, and this project has no migration story.
   const resolver = store.edgesTo(input.findingId).find((e) => e.relation === 'supersedes');
   if (resolver) {
     throw new Error(
       `finding ${input.findingId} is already resolved by ${resolver.fromArtifactId} — ` +
-        'supersede that answer instead of adding another',
+        'supersede that instead of adding another answer',
     );
   }
 

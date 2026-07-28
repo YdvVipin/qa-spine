@@ -144,6 +144,66 @@ test('openQuestions filtered by requirementId excludes other requirements', () =
   assert.equal(mine[0].requirement?.id, req.id);
 });
 
+test('openQuestions(store, reqId) finds an old finding even past the global cap', () => {
+  const store = new TraceStore(':memory:');
+  const { req, finding } = seed(store);
+
+  const other = store.record({
+    type: 'requirement',
+    sourceRef: 'PROJ-999',
+    content: { text: 'Exports must be timely.' },
+    provenance: human,
+  });
+  // Push the SQL-level cap's worth of newer findings onto a different requirement. Under
+  // the old JS-filter bug, openFindings() would return only these 500 (the most recent),
+  // pushing `finding` — older, and on a different requirement — out of the window before
+  // the requirement filter ever ran.
+  for (let i = 0; i < 500; i++) {
+    store.record({
+      type: 'finding',
+      content: {
+        category: 'AMB-VAGUE-QUANT',
+        quote: `timely-${i}`,
+        question: `How timely (${i})?`,
+        confidence: 'low',
+      },
+      provenance: ai,
+      links: [{ to: other.id, relation: 'derived_from' }],
+    });
+  }
+
+  const mine = openQuestions(store, req.id).open;
+  assert.equal(mine.length, 1, 'the per-requirement query must not be capped by the global window');
+  assert.equal(mine[0].findingId, finding.id);
+});
+
+test('openQuestions filtering still excludes a parentless finding, though the unfiltered list keeps it', () => {
+  const store = new TraceStore(':memory:');
+  const { req } = seed(store);
+  const orphan = store.record({
+    type: 'finding',
+    content: {
+      category: 'AMB-UNTESTABLE',
+      quote: 'somehow',
+      question: 'Observable how?',
+      confidence: 'unknown',
+    },
+    provenance: ai,
+  });
+
+  const unfiltered = openQuestions(store).open;
+  assert.ok(
+    unfiltered.some((q) => q.findingId === orphan.id),
+    'a broken edge must not hide work from the unfiltered queue',
+  );
+
+  const filtered = openQuestions(store, req.id).open;
+  assert.ok(
+    !filtered.some((q) => q.findingId === orphan.id),
+    'a finding with no requirement edge cannot match any requirement filter',
+  );
+});
+
 test('openQuestions keeps a parentless finding, with requirement null', () => {
   const store = new TraceStore(':memory:');
   const orphan = store.record({

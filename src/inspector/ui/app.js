@@ -138,7 +138,10 @@ function sourcePanel(finding, requirement) {
 }
 
 function reviewBox(artifact, existing) {
-  const note = h('textarea', { placeholder: 'why? (optional)' });
+  const note = h('textarea', {
+    placeholder: 'why? (optional)',
+    ariaLabel: 'reason for this verdict (optional)',
+  });
   const status = h('span', { className: 'said' });
 
   const submit = async (verdict) => {
@@ -272,6 +275,9 @@ async function chainView(id) {
             h('span', { className: 'id' }, n.sourceRef ?? n.id),
             h('span', { className: 'summary' }, summarise(n).slice(0, 60)),
             unresolved ? h('span', { className: 'flag' }, '● unresolved') : null,
+            // Colour alone (var(--ai), shared with the `verifies` edge) is not a safe way to
+            // mark an agent resolving its own finding — this text flag is the actual signal.
+            aiAnswer ? h('span', { className: 'flag' }, '● ai-answered') : null,
           );
           cards.set(n.id, card);
           return card;
@@ -293,6 +299,7 @@ async function chainView(id) {
         h('span', {}, h('i', { style: `background:${colour}` }), rel),
       ),
       h('span', { className: 'verdict-bad' }, '● finding nothing has resolved'),
+      h('span', { className: 'producer-ai' }, '● ai-answered — an AI resolved its own finding'),
     ),
   );
 
@@ -337,7 +344,11 @@ async function chainView(id) {
 
 /** One open question: the rule that fired, the quote in context, and a box to answer it. */
 function questionCard(q) {
-  const box = h('textarea', { placeholder: 'answer…', rows: 2 });
+  const box = h('textarea', {
+    placeholder: 'answer…',
+    rows: 2,
+    ariaLabel: 'answer to this audit question',
+  });
   const status = h('span', { className: 'said' });
 
   const submit = async () => {
@@ -354,9 +365,10 @@ function questionCard(q) {
   // Show the quote inside its surrounding text, so a mis-quote is as obvious here as in
   // the detail view. Windowed to 40 characters either side to keep cards scannable.
   const text = q.requirement?.text ?? '';
-  const at = q.quote ? text.indexOf(q.quote) : -1;
-  const context =
-    at === -1
+  const at = q.requirement && q.quote ? text.indexOf(q.quote) : -1;
+  const context = !q.requirement
+    ? h('span', { className: 'flag' }, '⚠ no requirement linked')
+    : at === -1
       ? h('span', { className: 'flag' }, q.quote ? `⚠ "${q.quote}" not found in source` : '—')
       : h(
           'span',
@@ -401,7 +413,9 @@ function answeredCard(a) {
       h('a', { className: 'q-src', href: `#/a/${a.id}` }, a.sourceRef ?? a.id),
       h('span', {}, ago(a.createdAt)),
     ),
-    h('div', { className: 'q-ask' }, summarise(a)),
+    // Truncated like the list view's row (.slice(0, 90)): this card is a queue row, not a
+    // detail panel — the full answer is one click away at #/a/<id>, same as any other artifact.
+    h('div', { className: 'q-ask' }, summarise(a).slice(0, 90)),
   );
 }
 
