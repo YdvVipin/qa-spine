@@ -8,8 +8,8 @@ prompt version made it.
 Self-hostable. Nothing leaves your machine except calls to your own configured LLM endpoint.
 The server proposes; it never mutates JIRA, repos or CI without an explicit approval call.
 
-**Status: Phases 1 and 1.5 complete.** The trace spine and the Inspector work. The agents
-that write into them do not exist yet.
+**Status: Phases 1, 1.5 and 2 complete.** The trace spine, the Inspector, and the first
+agent — an ambiguity audit against a published rubric — all work.
 
 ## Requirements
 
@@ -39,6 +39,8 @@ The trace store is a SQLite file at `.qa-spine/trace.db`, overridable with `QA_S
 | `health` | Confirms the server is up; reports the store path and artifact count. |
 | `trace_record` | Appends an artifact and its edges to existing artifacts, atomically. |
 | `trace_query` | Given an artifact ID, returns the full upstream/downstream chain. Without an ID, lists recent artifacts. |
+| `audit_requirement` | Returns a requirement plus the published ambiguity rubric, for the calling agent to reason over. Makes no model call. |
+| `audit_submit` | Records ambiguity findings, rejecting any that cite an unknown rule or a quote absent from the requirement. |
 
 ## The Inspector
 
@@ -73,7 +75,7 @@ made the agents better or worse.
 
 ## The trace store
 
-Artifacts are `requirement | finding | test_case | test_run | defect | verdict`. Edges are
+Artifacts are `requirement | finding | test_case | test_run | defect | verdict | answer`. Edges are
 `derived_from | tests | covers | verifies | contradicts | supersedes`, always directed from
 the newer artifact to the older one.
 
@@ -86,12 +88,28 @@ Provenance is mandatory and validated on write: an artifact claiming `producer: 
 rejected unless it also carries `model` and `promptVersion`. An AI artifact that cannot say
 what produced it is not traceable, which is the entire point of the spine.
 
+## Rubrics
+
+`rubrics/ambiguity.json` is published, versioned data — the thing a team argues about in
+review rather than a prompt buried in the server. Its `version` is stamped onto every
+finding as `promptVersion`, which is what makes "did that rubric edit help?" answerable
+from the exported review labels instead of a matter of taste.
+
+Point `QA_SPINE_RUBRICS` at your own directory to publish rubrics for your team.
+
+The server never calls a model. `audit_requirement` hands the requirement and the rubric
+to the calling agent; `audit_submit` takes what comes back and refuses anything that
+cites an unknown rule or quotes text that is not in the requirement. A hallucinated quote
+cannot enter the store.
+
 ## Roadmap
 
 - **Phase 1 — trace spine.** Done.
 - **Phase 1.5 — Inspector.** Done.
-- **Phase 2 — `audit_requirement`.** Ambiguity audit against a published YAML rubric.
-  Emits questions for a human, never rewritten requirements.
+- **Phase 2 — `audit_requirement`.** Ambiguity audit against a published JSON rubric.
+  Emits questions for a human, never rewritten requirements. Done.
+- **Phase 2.5 — audit queue.** An Inspector view for answering those questions, where an
+  answer supersedes the finding it resolves.
 - **Phase 3 — `assess_release_risk`.** One-page release brief with a verdict, which can
   surface a requirement-stage finding that was never resolved and touches a changed area.
 - **Phase 4 — `generate_fixtures`.** Schema-validated test data with locale packs.
