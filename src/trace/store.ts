@@ -142,8 +142,31 @@ export class TraceStore {
     return (rows as Row[]).map(toArtifact);
   }
 
-  edgesFrom(id: string): Edge[] {
-    const rows = this.db.prepare('SELECT * FROM edges WHERE from_id = ?').all(id) as {
+  /**
+   * Findings nothing has superseded — the audit queue's worklist. Asked in SQL rather than
+   * by listing every finding and filtering in JS, which would be right only at today's size.
+   *
+   * ponytail: `limit` is the only paging. A queue a human works down does not need more;
+   * if one ever holds more open findings than this, it needs real paging, not a bigger number.
+   */
+  openFindings(limit = 500): Artifact[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM artifacts a
+          WHERE a.type = 'finding'
+            AND NOT EXISTS (
+              SELECT 1 FROM edges e WHERE e.to_id = a.id AND e.relation = 'supersedes'
+            )
+          ORDER BY a.created_at DESC
+          LIMIT ?`,
+      )
+      .all(limit);
+    return (rows as Row[]).map(toArtifact);
+  }
+
+  /** Shared by edgesFrom/edgesTo. `column` is a closed union, never caller input. */
+  private edgesBy(column: 'from_id' | 'to_id', id: string): Edge[] {
+    const rows = this.db.prepare(`SELECT * FROM edges WHERE ${column} = ?`).all(id) as {
       from_id: string;
       to_id: string;
       relation: string;
@@ -157,6 +180,15 @@ export class TraceStore {
         createdAt: e.created_at,
       }),
     );
+  }
+
+  edgesFrom(id: string): Edge[] {
+    return this.edgesBy('from_id', id);
+  }
+
+  /** Incoming edges. What resolves a finding points AT it, so edgesFrom cannot find it. */
+  edgesTo(id: string): Edge[] {
+    return this.edgesBy('to_id', id);
   }
 
   /**
