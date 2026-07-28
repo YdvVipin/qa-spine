@@ -195,3 +195,31 @@ test('audit_submit still enforces the AI provenance rule', () => {
   );
   assert.equal(countArtifacts(store), before);
 });
+
+test('audit_submit rejects a finding with an invalid confidence enum', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+
+  // Cast to bypass TypeScript's type check — we're testing runtime validation.
+  const invalidFinding = vagueFinding({ confidence: 'ABSOLUTELY' }) as any;
+
+  assert.throws(
+    () => submitFindings(store, { requirementId: req.id, findings: [invalidFinding], provenance: ai }),
+    /Invalid option/,
+  );
+});
+
+test('audit_submit strips unknown keys like suggestedRewrite from recorded findings', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+
+  // Cast to bypass TypeScript's type check — we're testing runtime stripping.
+  const findingWithExtra = vagueFinding({ suggestedRewrite: 'within 3 business days' }) as any;
+
+  const written = submitFindings(store, { requirementId: req.id, findings: [findingWithExtra], provenance: ai });
+
+  assert.equal(written.length, 1);
+  assert.ok(!('suggestedRewrite' in written[0].content), 'suggestedRewrite was stripped from content');
+  assert.ok(written[0].content.category === 'AMB-VAGUE-QUANT', 'valid fields are preserved');
+  assert.ok(written[0].content.quote === 'load quickly', 'quote is preserved');
+});
