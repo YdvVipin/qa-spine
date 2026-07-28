@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadRubric } from '../src/audit.ts';
+import { loadRubric, auditRequirement } from '../src/audit.ts';
 import { ArtifactType } from '../src/trace/schema.ts';
+import { TraceStore } from '../src/trace/store.ts';
 
 test('the shipped ambiguity rubric loads and validates', () => {
   const rubric = loadRubric();
@@ -22,4 +23,57 @@ test('a missing rubric fails with the path it looked in', () => {
 
 test('answer is a recordable artifact type', () => {
   assert.equal(ArtifactType.parse('answer'), 'answer');
+});
+
+const REQ_TEXT = 'The dashboard should load quickly, and users are notified when it fails.';
+
+function seedRequirement(store: TraceStore) {
+  return store.record({
+    type: 'requirement',
+    sourceRef: 'PROJ-114',
+    content: { text: REQ_TEXT },
+    provenance: { producer: 'human' },
+  });
+}
+
+test('audit_requirement returns the requirement text and the rubric', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+
+  const result = auditRequirement(store, req.id);
+
+  assert.equal(result.requirement.id, req.id);
+  assert.equal(result.requirement.sourceRef, 'PROJ-114');
+  assert.equal(result.requirement.text, REQ_TEXT);
+  assert.equal(result.rubric.version, 'ambiguity/1');
+  assert.match(result.instructions, /verbatim/i, 'tells the model the quote is checked');
+});
+
+test('audit_requirement rejects an unknown id', () => {
+  const store = new TraceStore(':memory:');
+  assert.throws(() => auditRequirement(store, 'nope_123'), /no artifact with id nope_123/);
+});
+
+test('audit_requirement rejects an artifact that is not a requirement', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  const finding = store.record({
+    type: 'finding',
+    content: { category: 'vague_qualifier', quote: 'quickly', confidence: 'high' },
+    provenance: { producer: 'ai', model: 'claude-opus-5', promptVersion: 'ambiguity/1' },
+    links: [{ to: req.id, relation: 'derived_from' }],
+  });
+
+  assert.throws(() => auditRequirement(store, finding.id), /is a finding, not a requirement/);
+});
+
+test('audit_requirement rejects a requirement with no text', () => {
+  const store = new TraceStore(':memory:');
+  const empty = store.record({
+    type: 'requirement',
+    content: { note: 'no text field here' },
+    provenance: { producer: 'human' },
+  });
+
+  assert.throws(() => auditRequirement(store, empty.id), /has no content\.text to audit/);
 });
