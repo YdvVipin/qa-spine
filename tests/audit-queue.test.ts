@@ -1,7 +1,9 @@
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import type { AddressInfo } from 'node:net';
 import { TraceStore } from '../src/trace/store.ts';
 import { openQuestions, recordAnswer } from '../src/audit.ts';
+import { createInspector } from '../src/inspector/server.ts';
 
 const human = { producer: 'human' as const };
 const ai = { producer: 'ai' as const, model: 'claude-opus-5', promptVersion: 'ambiguity/1' };
@@ -162,6 +164,67 @@ test('openQuestions keeps a parentless finding, with requirement null', () => {
 });
 
 const countArtifacts = (store: TraceStore) => store.list(undefined, 1e9).length;
+
+/** Boots the inspector on an ephemeral port and hands back a fetch bound to it. */
+async function serve(store: TraceStore, t: TestContext) {
+  const server = createInspector(store);
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  t.after(() => new Promise<void>((r) => server.close(() => r())));
+  return (path: string, init?: RequestInit) => fetch(base + path, init);
+}
+
+const postAnswer = (api: (p: string, i?: RequestInit) => Promise<Response>, body: unknown) =>
+  api('/api/answer', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+test('GET /api/open lists the queue and shrinks when a question is answered', async (t) => {
+  const store = new TraceStore(':memory:');
+  const { finding } = seed(store);
+  const api = await serve(store, t);
+
+  const before = await (await api('/api/open')).json();
+  assert.equal(before.open.length, 1);
+  assert.equal(before.open[0].findingId, finding.id);
+
+  const res = await postAnswer(api, { findingId: finding.id, answer: 'Under 1.5s.' });
+  assert.equal(res.status, 200);
+
+  const after = await (await api('/api/open')).json();
+  assert.deepEqual(after.open, [], 'answering removes it from the queue');
+});
+
+test('POST /api/answer always records human provenance, whatever the body claims', async (t) => {
+  const store = new TraceStore(':memory:');
+  const { finding } = seed(store);
+  const api = await serve(store, t);
+
+  const res = await postAnswer(api, {
+    findingId: finding.id,
+    answer: 'Under 1.5s.',
+    // The Inspector must ignore this: its writes are human by definition.
+    provenance: { producer: 'ai', model: 'sneaky', promptVersion: 'x' },
+  });
+
+  const answer = await res.json();
+  assert.equal(answer.provenance.producer, 'human');
+  assert.equal(answer.provenance.model, undefined);
+});
+
+test('POST /api/answer rejects a blank answer with 400 and writes nothing', async (t) => {
+  const store = new TraceStore(':memory:');
+  const { finding } = seed(store);
+  const api = await serve(store, t);
+  const before = countArtifacts(store);
+
+  const res = await postAnswer(api, { findingId: finding.id, answer: '  ' });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /answer must not be blank/);
+  assert.equal(countArtifacts(store), before, 'store untouched');
+});
 
 test('recordAnswer links to both the finding and the requirement, and closes the question', () => {
   const store = new TraceStore(':memory:');

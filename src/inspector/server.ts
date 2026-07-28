@@ -4,6 +4,7 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TraceStore } from '../trace/store.ts';
 import { ArtifactType } from '../trace/schema.ts';
+import { openQuestions, recordAnswer } from '../audit.ts';
 
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), 'ui');
 const MIME: Record<string, string> = {
@@ -52,6 +53,29 @@ export function createInspector(store: TraceStore): Server {
           links: [{ to: body.artifactId, relation: 'reviews' }],
         });
         return send(200, review);
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/open') {
+        return send(200, openQuestions(store));
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/answer') {
+        const body = JSON.parse(await text(req));
+        try {
+          // Provenance is hardcoded, not read from the body: everything the Inspector writes
+          // is a human act. An agent that wants to answer uses the audit_answer MCP tool,
+          // where its own provenance is recorded and stays visible.
+          return send(
+            200,
+            recordAnswer(store, {
+              findingId: String(body.findingId ?? ''),
+              answer: String(body.answer ?? ''),
+              provenance: { producer: 'human' },
+            }),
+          );
+        } catch (err) {
+          return send(400, { error: err instanceof Error ? err.message : String(err) });
+        }
       }
 
       if (req.method === 'GET') {
