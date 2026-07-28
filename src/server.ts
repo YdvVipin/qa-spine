@@ -6,7 +6,13 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { TraceStore } from './trace/store.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
-import { auditRequirement, submitFindings, AuditFinding } from './audit.ts';
+import {
+  auditRequirement,
+  submitFindings,
+  AuditFinding,
+  openQuestions,
+  recordAnswer,
+} from './audit.ts';
 
 export const VERSION = '0.1.0';
 
@@ -118,6 +124,51 @@ export function createServer(store: TraceStore) {
     (args) => {
       try {
         return json({ recorded: submitFindings(store, args).map((a) => a.id) });
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'audit_open',
+    {
+      description:
+        'List ambiguity questions still waiting on an answer. Each carries the rule it came ' +
+        'from, the quoted span, and the requirement text needed to answer it, so no second ' +
+        'call is required. Omit requirementId for everything outstanding.',
+      inputSchema: {
+        requirementId: z.string().optional().describe('Limit to one requirement.'),
+      },
+    },
+    ({ requirementId }) => {
+      try {
+        return json(openQuestions(store, requirementId));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'audit_answer',
+    {
+      description:
+        'Answer an open ambiguity question. The answer supersedes the finding, which retires ' +
+        'it. Rejects a blank answer, an id that is not a finding, and a finding something has ' +
+        'already resolved. Your provenance is recorded as given and is not rewritten: an ' +
+        'answer produced by AI stays visibly an AI answer.',
+      inputSchema: {
+        findingId: z.string().describe('The finding whose question you are answering.'),
+        answer: z.string().describe('The answer, in full. Blank answers are rejected.'),
+        provenance: ProvenanceInput.describe(
+          'Who is answering. AI must give `model` and `promptVersion`.',
+        ),
+      },
+    },
+    (args) => {
+      try {
+        return json(recordAnswer(store, args));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
