@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { TraceStore } from './trace/store.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
+import { auditRequirement, submitFindings, AuditFinding } from './audit.ts';
 
 export const VERSION = '0.1.0';
 
@@ -77,6 +78,49 @@ export function createServer(store: TraceStore) {
       if (!artifactId) return json({ artifacts: store.list(type) });
       const chain = store.chain(artifactId);
       return chain ? json(chain) : fail(`no artifact with id ${artifactId}`);
+    },
+  );
+
+  server.registerTool(
+    'audit_requirement',
+    {
+      description:
+        'Load a requirement and the published ambiguity rubric. Returns both, plus instructions. ' +
+        'This tool makes no model call: reason over what it returns, then record what you find ' +
+        'with `audit_submit`. Emit questions for a human, never a rewritten requirement.',
+      inputSchema: {
+        requirementId: z.string().describe('The artifact id of the requirement to audit.'),
+      },
+    },
+    ({ requirementId }) => {
+      try {
+        return json(auditRequirement(store, requirementId));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'audit_submit',
+    {
+      description:
+        'Record ambiguity findings against a requirement. Every finding must cite a rule id from ' +
+        'the rubric and quote the requirement verbatim; if any finding fails either check the ' +
+        'whole submission is rejected and nothing is written. `promptVersion` is set by the ' +
+        'server from the rubric version, not by the caller.',
+      inputSchema: {
+        requirementId: z.string(),
+        findings: z.array(AuditFinding).min(1),
+        provenance: ProvenanceInput.describe('Who produced these. AI must give `model`.'),
+      },
+    },
+    (args) => {
+      try {
+        return json({ recorded: submitFindings(store, args).map((a) => a.id) });
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
     },
   );
 
