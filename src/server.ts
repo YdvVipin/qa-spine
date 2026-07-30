@@ -13,6 +13,7 @@ import {
   openQuestions,
   recordAnswer,
 } from './audit.ts';
+import { assessReleaseRisk, recordVerdict } from './release.ts';
 
 export const VERSION = '0.1.0';
 
@@ -169,6 +170,69 @@ export function createServer(store: TraceStore) {
     (args) => {
       try {
         return json(recordAnswer(store, args));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'assess_release_risk',
+    {
+      description:
+        'Given the areas a release touches, return every unresolved requirement-stage finding ' +
+        'on those areas, plus the surrounding artifacts as unscored evidence. Makes no model ' +
+        'call: reason over what it returns, then record your brief with `release_submit`. ' +
+        'Every signal blocks a ship verdict.',
+      inputSchema: {
+        changed: z
+          .array(z.string())
+          .min(1)
+          .describe('sourceRefs this release touches — JIRA keys and file paths. Matched exactly.'),
+        releaseRef: z
+          .string()
+          .optional()
+          .describe('e.g. release/2026.7.3. Becomes the verdict sourceRef on submit.'),
+      },
+    },
+    (args) => {
+      try {
+        return json(assessReleaseRisk(store, args));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'release_submit',
+    {
+      description:
+        'Record a release verdict. Signals are recomputed from `changed` and are never taken ' +
+        'from the caller, so a `ship` cannot be waved through by omitting a blocker: it is ' +
+        'rejected while any signal is live unless `override` gives a reason, which is recorded. ' +
+        'Every id in `cites` must exist. Your provenance is recorded as given.',
+      inputSchema: {
+        releaseRef: z.string().describe('e.g. release/2026.7.3.'),
+        verdict: z.enum(['ship', 'hold']),
+        reason: z.string().describe('The one-page brief. Blank is rejected.'),
+        cites: z
+          .array(z.string())
+          .describe('Artifact ids the brief refers to. Each becomes a derived_from edge.'),
+        changed: z
+          .array(z.string())
+          .min(1)
+          .describe('The same list passed to assess_release_risk. Signals are recomputed from it.'),
+        override: z
+          .object({ reason: z.string() })
+          .optional()
+          .describe('Required to ship while a signal is live. Recorded on the verdict.'),
+        provenance: ProvenanceInput.describe('Who decided. AI must give `model` and `promptVersion`.'),
+      },
+    },
+    (args) => {
+      try {
+        return json(recordVerdict(store, args));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
