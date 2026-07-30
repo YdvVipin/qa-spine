@@ -1,5 +1,5 @@
 import type { TraceStore } from './trace/store.ts';
-import type { Artifact, Edge } from './trace/schema.ts';
+import type { Artifact, Edge, Provenance } from './trace/schema.ts';
 
 const INSTRUCTIONS =
   'Write a one-page release brief, then record it with release_submit. Cite an artifact id ' +
@@ -85,4 +85,63 @@ export function assessReleaseRisk(
     context: { nodes: [...nodes.values()], edges: [...edges.values()] },
     instructions: INSTRUCTIONS,
   };
+}
+
+/**
+ * Records a release verdict, refusing a `ship` while any signal is live.
+ *
+ * The signals are recomputed here from `changed` and are never taken from the caller. An
+ * agent that supplied its own signal list could wave a release through by omitting the
+ * blocker, which is precisely what this phase exists to prevent — so the cost is that
+ * `changed` must be passed again after `assess_release_risk`.
+ *
+ * ponytail: the override is unstructured free text and is not gated on `approvedBy`. Anyone
+ * who can call this can ship over a blocker by supplying a reason. Visibility, not
+ * prevention — the same trade-off as an AI answer resolving a finding in phase 2.5. Upgrade
+ * path: require `provenance.approvedBy` before an override counts.
+ */
+export function recordVerdict(
+  store: TraceStore,
+  input: {
+    releaseRef: string;
+    verdict: 'ship' | 'hold';
+    reason: string;
+    cites: string[];
+    changed: string[];
+    override?: { reason: string };
+    provenance: Provenance;
+  },
+): Artifact {
+  const reason = input.reason.trim();
+  if (!reason) throw new Error('reason must not be blank');
+
+  const cites = [...new Set(input.cites)];
+  for (const id of cites) {
+    if (!store.get(id)) throw new Error(`cites unknown artifact ${id}`);
+  }
+
+  const overrideReason = input.override?.reason.trim();
+  const override = overrideReason ? { reason: overrideReason } : null;
+  if (override && input.verdict === 'hold') {
+    throw new Error('override is only meaningful with a ship verdict');
+  }
+
+  const { signals } = assessReleaseRisk(store, { changed: input.changed });
+  if (input.verdict === 'ship' && signals.length && !override) {
+    const named = signals
+      .map((s) => `${s.detail.findingId} (${s.detail.sourceRef ?? 'no sourceRef'})`)
+      .join(', ');
+    throw new Error(
+      `cannot ship: ${signals.length} unresolved finding(s) on changed areas: ${named} — ` +
+        'answer them with audit_answer, or pass override with a reason',
+    );
+  }
+
+  return store.record({
+    type: 'verdict',
+    sourceRef: input.releaseRef,
+    content: { verdict: input.verdict, reason, changed: [...new Set(input.changed)], override },
+    provenance: input.provenance,
+    links: cites.map((to) => ({ to, relation: 'derived_from' as const })),
+  });
 }

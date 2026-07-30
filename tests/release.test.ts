@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TraceStore } from '../src/trace/store.ts';
-import { assessReleaseRisk } from '../src/release.ts';
+import { assessReleaseRisk, recordVerdict } from '../src/release.ts';
 
 const human = { producer: 'human' as const };
 const ai = { producer: 'ai' as const, model: 'claude-opus-5', promptVersion: 'ambiguity/1' };
@@ -150,4 +150,149 @@ test('assessReleaseRisk deduplicates context nodes and edges from overlapping ch
   const edgeTriples = context.edges.map((e) => `${e.fromArtifactId}>${e.toArtifactId}:${e.relation}`);
   const uniqueEdgeTriples = new Set(edgeTriples);
   assert.equal(edgeTriples.length, uniqueEdgeTriples.size, 'context.edges should have no duplicate (from, to, relation) triples');
+});
+
+test('recordVerdict records a hold with a derived_from edge to every cited artifact', () => {
+  const store = new TraceStore(':memory:');
+  const { req, open } = seedRelease(store);
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/2026.7.3',
+    verdict: 'hold',
+    reason: 'PROJ-42 notification failure was flagged at requirement stage and never resolved.',
+    cites: [open.id, req.id],
+    changed: ['PROJ-42'],
+    provenance: ai,
+  });
+
+  assert.equal(verdict.type, 'verdict');
+  assert.equal(verdict.sourceRef, 'release/2026.7.3');
+  assert.equal(verdict.content.verdict, 'hold');
+  assert.deepEqual(verdict.content.changed, ['PROJ-42']);
+  assert.equal(verdict.content.override, null);
+
+  const targets = store.edgesFrom(verdict.id).map((e) => e.toArtifactId).sort();
+  assert.deepEqual(targets, [open.id, req.id].sort());
+});
+
+test('recordVerdict rejects a blank reason and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold', reason: '   ',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /reason must not be blank/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict rejects an unknown cited artifact and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold', reason: 'because',
+      cites: ['finding_deadbeef'], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /cites unknown artifact finding_deadbeef/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict refuses to ship while a signal is live, and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'ship', reason: 'looks fine to me',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    new RegExp(`cannot ship: 1 unresolved finding\\(s\\).*${open.id}`),
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict allows a ship with an override and records the reason', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1',
+    verdict: 'ship',
+    reason: 'Hotfix. The open question is cosmetic and tracked separately.',
+    cites: [open.id],
+    changed: ['PROJ-42'],
+    override: { reason: 'hotfix, accepted by release manager' },
+    provenance: ai,
+  });
+
+  assert.equal(verdict.content.verdict, 'ship');
+  assert.deepEqual(verdict.content.override, { reason: 'hotfix, accepted by release manager' });
+});
+
+test('recordVerdict rejects an override supplied with a hold verdict', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold', reason: 'holding',
+      cites: [open.id], changed: ['PROJ-42'],
+      override: { reason: 'pointless here' }, provenance: ai,
+    }),
+    /override is only meaningful with a ship verdict/,
+  );
+});
+
+test('recordVerdict allows a ship when no signal is live', () => {
+  const store = new TraceStore(':memory:');
+  const { req, open } = seedRelease(store);
+  store.record({
+    type: 'answer',
+    content: { text: 'Retry twice, then raise a defect and alert on-call.' },
+    provenance: human,
+    links: [
+      { to: open.id, relation: 'supersedes' },
+      { to: req.id, relation: 'derived_from' },
+    ],
+  });
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1', verdict: 'ship', reason: 'All requirement questions answered.',
+    cites: [req.id], changed: ['PROJ-42'], provenance: ai,
+  });
+  assert.equal(verdict.content.verdict, 'ship');
+});
+
+test('recordVerdict preserves AI provenance and does not override promptVersion', () => {
+  const store = new TraceStore(':memory:');
+  const { req, open } = seedRelease(store);
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1', verdict: 'hold', reason: 'holding',
+    cites: [open.id, req.id], changed: ['PROJ-42'],
+    provenance: { producer: 'ai', model: 'claude-opus-5', promptVersion: 'release-brief/7' },
+  });
+
+  assert.equal(verdict.provenance.model, 'claude-opus-5');
+  assert.equal(verdict.provenance.promptVersion, 'release-brief/7');
+});
+
+test('recordVerdict deduplicates cites so a repeated id is not an edge conflict', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1', verdict: 'hold', reason: 'holding',
+    cites: [open.id, open.id], changed: ['PROJ-42'], provenance: ai,
+  });
+  assert.equal(store.edgesFrom(verdict.id).length, 1);
 });
