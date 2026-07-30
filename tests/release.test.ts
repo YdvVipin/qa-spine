@@ -171,8 +171,12 @@ test('recordVerdict records a hold with a derived_from edge to every cited artif
   assert.deepEqual(verdict.content.changed, ['PROJ-42']);
   assert.equal(verdict.content.override, null);
 
-  const targets = store.edgesFrom(verdict.id).map((e) => e.toArtifactId).sort();
+  const edges = store.edgesFrom(verdict.id);
+  const targets = edges.map((e) => e.toArtifactId).sort();
   assert.deepEqual(targets, [open.id, req.id].sort());
+  for (const e of edges) {
+    assert.equal(e.relation, 'derived_from');
+  }
 });
 
 test('recordVerdict rejects a blank reason and writes nothing', () => {
@@ -241,6 +245,7 @@ test('recordVerdict allows a ship with an override and records the reason', () =
 test('recordVerdict rejects an override supplied with a hold verdict', () => {
   const store = new TraceStore(':memory:');
   const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
 
   assert.throws(
     () => recordVerdict(store, {
@@ -250,6 +255,7 @@ test('recordVerdict rejects an override supplied with a hold verdict', () => {
     }),
     /override is only meaningful with a ship verdict/,
   );
+  assert.equal(store.list(undefined, 1e9).length, before);
 });
 
 test('recordVerdict allows a ship when no signal is live', () => {
@@ -295,4 +301,77 @@ test('recordVerdict deduplicates cites so a repeated id is not an edge conflict'
     cites: [open.id, open.id], changed: ['PROJ-42'], provenance: ai,
   });
   assert.equal(store.edgesFrom(verdict.id).length, 1);
+});
+
+test('recordVerdict normalizes padded changed refs and signals persists', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'ship', reason: 'looks fine',
+      cites: [open.id], changed: ['  PROJ-42\n'], provenance: ai,
+    }),
+    /cannot ship: 1 unresolved finding\(s\)/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict stores unmatched refs in verdict content', () => {
+  const store = new TraceStore(':memory:');
+  const { req } = seedRelease(store);
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1', verdict: 'hold', reason: 'unmatched refs',
+    cites: [req.id], changed: ['PROJ-42', 'src/missing.ts'], provenance: ai,
+  });
+
+  assert.deepEqual(verdict.content.unmatched, ['src/missing.ts']);
+});
+
+test('recordVerdict rejects invalid verdict and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'SHIP' as any, reason: 'uppercase',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /verdict must be 'ship' or 'hold'/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict rejects blank releaseRef and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: '   ', verdict: 'hold', reason: 'holding',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /releaseRef must not be blank/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict rejects blank override.reason and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'ship', reason: 'shipping anyway',
+      cites: [open.id], changed: ['PROJ-42'],
+      override: { reason: '   ' }, provenance: ai,
+    }),
+    /override.reason must not be blank/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
 });

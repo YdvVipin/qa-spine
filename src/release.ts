@@ -39,7 +39,7 @@ export function assessReleaseRisk(
   store: TraceStore,
   input: { changed: string[]; releaseRef?: string },
 ) {
-  const changed = [...new Set(input.changed)];
+  const changed = [...new Set(input.changed.map((r) => r.trim()).filter((r) => r))];
   if (!changed.length) throw new Error('changed must not be empty');
 
   const matched = store.bySourceRef(changed);
@@ -49,6 +49,10 @@ export function assessReleaseRisk(
 
   // ponytail: one openFindings query per changed requirement. Fine for a release; batch into
   // a single query if a release ever touches hundreds of requirements.
+  // ponytail: openFindings requires a derived_from edge; orphaned findings (no requirement edge)
+  // are invisible here. This diverges from openQuestions in src/audit.ts, which surfaces them
+  // to prevent hidden work — but a parentless finding cannot be attributed to a changed area,
+  // so the veto cannot gate on it. Upgrade: surface orphaned findings as unresolved context.
   const signals: RiskSignal[] = requirements.flatMap((req) =>
     store.openFindings(500, req.id).map((f) => ({
       kind: 'unresolved_finding_on_changed_area' as const,
@@ -99,6 +103,11 @@ export function assessReleaseRisk(
  * who can call this can ship over a blocker by supplying a reason. Visibility, not
  * prevention — the same trade-off as an AI answer resolving a finding in phase 2.5. Upgrade
  * path: require `provenance.approvedBy` before an override counts.
+ *
+ * ponytail: assess-then-record race: if a superseding answer is recorded between
+ * assessReleaseRisk and store.record, the signals list is stale. The cost of re-checking
+ * signals post-write exceeds the risk, since this is an uncommon window. Upgrade path:
+ * transaction-like semantics if the race becomes a problem.
  */
 export function recordVerdict(
   store: TraceStore,
@@ -112,21 +121,32 @@ export function recordVerdict(
     provenance: Provenance;
   },
 ): Artifact {
+  const releaseRef = input.releaseRef.trim();
+  if (!releaseRef) throw new Error('releaseRef must not be blank');
+
   const reason = input.reason.trim();
   if (!reason) throw new Error('reason must not be blank');
+
+  if (input.verdict !== 'ship' && input.verdict !== 'hold') {
+    throw new Error(`verdict must be 'ship' or 'hold', got ${JSON.stringify(input.verdict)}`);
+  }
 
   const cites = [...new Set(input.cites)];
   for (const id of cites) {
     if (!store.get(id)) throw new Error(`cites unknown artifact ${id}`);
   }
 
-  const overrideReason = input.override?.reason.trim();
+  let overrideReason: string | null = null;
+  if (input.override) {
+    overrideReason = input.override.reason?.trim() ?? '';
+    if (!overrideReason) throw new Error('override.reason must not be blank');
+  }
   const override = overrideReason ? { reason: overrideReason } : null;
   if (override && input.verdict === 'hold') {
     throw new Error('override is only meaningful with a ship verdict');
   }
 
-  const { signals } = assessReleaseRisk(store, { changed: input.changed });
+  const { signals, matched } = assessReleaseRisk(store, { changed: input.changed });
   if (input.verdict === 'ship' && signals.length && !override) {
     const named = signals
       .map((s) => `${s.detail.findingId} (${s.detail.sourceRef ?? 'no sourceRef'})`)
@@ -139,8 +159,14 @@ export function recordVerdict(
 
   return store.record({
     type: 'verdict',
-    sourceRef: input.releaseRef,
-    content: { verdict: input.verdict, reason, changed: [...new Set(input.changed)], override },
+    sourceRef: releaseRef,
+    content: {
+      verdict: input.verdict,
+      reason,
+      changed: [...new Set(input.changed.map((r) => r.trim()).filter((r) => r))],
+      unmatched: matched.unmatched,
+      override,
+    },
     provenance: input.provenance,
     links: cites.map((to) => ({ to, relation: 'derived_from' as const })),
   });
