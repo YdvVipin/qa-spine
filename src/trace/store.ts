@@ -143,6 +143,25 @@ export class TraceStore {
   }
 
   /**
+   * Artifacts whose sourceRef is one of `refs` — the join between "what this release
+   * changed" and what the spine knows, since every artifact already carries the ref it
+   * came from. Matching is exact equality.
+   *
+   * ponytail: exact match only, no prefix or glob. A caller must pass both file paths and
+   * ticket keys. If path-shaped refs ever need to reach their requirement on their own,
+   * add prefix matching or a published path->requirement map.
+   */
+  bySourceRef(refs: string[]): Artifact[] {
+    // `IN ()` is a syntax error in SQLite, not an empty result set.
+    if (!refs.length) return [];
+    const holes = refs.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT * FROM artifacts WHERE source_ref IN (${holes}) ORDER BY created_at`)
+      .all(...refs);
+    return (rows as Row[]).map(toArtifact);
+  }
+
+  /**
    * Findings nothing has superseded — the audit queue's worklist. Asked in SQL rather than
    * by listing every finding and filtering in JS, which would be right only at today's size.
    *
