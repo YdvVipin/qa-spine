@@ -131,3 +131,23 @@ test('assessReleaseRisk rejects an empty changed list', () => {
   const store = new TraceStore(':memory:');
   assert.throws(() => assessReleaseRisk(store, { changed: [] }), /changed must not be empty/);
 });
+
+test('assessReleaseRisk deduplicates context nodes and edges from overlapping chains', () => {
+  const store = new TraceStore(':memory:');
+  seedRelease(store);
+
+  // seedRelease creates req, resolved, and open, all with sourceRef: 'PROJ-42'.
+  // bySourceRef returns all three; chain() is called on each, producing overlapping results.
+  // This test ensures the Map-based dedup removes duplicates.
+  const { context } = assessReleaseRisk(store, { changed: ['PROJ-42'] });
+
+  // Every artifact id should appear exactly once in context.nodes.
+  const nodeIds = context.nodes.map((n) => n.id);
+  const uniqueNodeIds = new Set(nodeIds);
+  assert.equal(nodeIds.length, uniqueNodeIds.size, 'context.nodes should have no duplicate artifact ids');
+
+  // Every (from, to, relation) edge triple should appear exactly once.
+  const edgeTriples = context.edges.map((e) => `${e.fromArtifactId}>${e.toArtifactId}:${e.relation}`);
+  const uniqueEdgeTriples = new Set(edgeTriples);
+  assert.equal(edgeTriples.length, uniqueEdgeTriples.size, 'context.edges should have no duplicate (from, to, relation) triples');
+});
