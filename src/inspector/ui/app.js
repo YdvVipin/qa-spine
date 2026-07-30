@@ -27,6 +27,12 @@ const ago = (iso) => new Date(iso).toLocaleString();
 /** One line that tells you what an artifact is without opening it. */
 function summarise(a) {
   const c = a.content ?? {};
+  // A verdict leads with its decision, and an override says so first: an overridden ship and a
+  // clean ship are the two rows a human most needs to tell apart at a glance.
+  if (a.type === 'verdict' && c.verdict) {
+    const flag = c.override ? '⚠ OVERRIDDEN ' : '';
+    return `${flag}${String(c.verdict).toUpperCase()} — ${c.reason ?? ''}`;
+  }
   return c.text ?? c.quote ?? c.name ?? c.reason ?? c.verdict ?? c.note ?? JSON.stringify(c);
 }
 
@@ -204,6 +210,19 @@ async function detailView(id) {
     .map((e) => byId.get(e.toArtifactId))
     .find((n) => n?.type === 'requirement');
 
+  // The override is the one thing in a verdict a human must not miss, so it gets a callout
+  // rather than a line in the JSON dump below.
+  const override =
+    a.type === 'verdict' && a.content?.override
+      ? h(
+          'section',
+          { className: 'panel' },
+          h('h2', {}, 'override'),
+          h('p', { className: 'flag verdict-bad' }, '⚠ shipped over unresolved findings'),
+          h('p', {}, String(a.content.override.reason ?? '')),
+        )
+      : null;
+
   const content = h(
     'section',
     { className: 'panel' },
@@ -215,6 +234,7 @@ async function detailView(id) {
     h(
       'div',
       { className: 'cols' },
+      override,
       a.type === 'finding' && requirement ? sourcePanel(a, requirement) : null,
       content,
       provenancePanel(a),
