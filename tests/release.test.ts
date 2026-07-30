@@ -97,6 +97,7 @@ test('assessReleaseRisk ignores a finding something has superseded', () => {
   const { resolved } = seedRelease(store);
 
   const { signals } = assessReleaseRisk(store, { changed: ['PROJ-42'] });
+  assert.equal(signals.length, 1);
   assert.ok(!signals.some((s) => s.detail.findingId === resolved.id));
 });
 
@@ -224,6 +225,47 @@ test('recordVerdict refuses to ship while a signal is live, and writes nothing',
   assert.equal(store.list(undefined, 1e9).length, before);
 });
 
+// I5: every existing fixture seeds exactly one open finding, so a mutant that slices
+// openFindings down to one result passes 73/73 unnoticed. This seeds a second open finding
+// on the same requirement and checks the count, both signals, and both ids in the veto.
+test('recordVerdict counts and names every open finding, not just one', () => {
+  const store = new TraceStore(':memory:');
+  const { req, open } = seedRelease(store);
+  const second = store.record({
+    type: 'finding',
+    sourceRef: 'PROJ-42',
+    content: {
+      category: 'AMB-VAGUE-QUANT',
+      quote: 'processed quickly',
+      question: 'What counts as quick enough?',
+      confidence: 'low',
+    },
+    provenance: ai,
+    links: [{ to: req.id, relation: 'derived_from' }],
+  });
+
+  const { signals } = assessReleaseRisk(store, { changed: ['PROJ-42'] });
+  assert.deepEqual(
+    signals.map((s) => s.detail.findingId).sort(),
+    [open.id, second.id].sort(),
+  );
+
+  const before = store.list(undefined, 1e9).length;
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'ship', reason: 'looks fine to me',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    (err) => {
+      assert.match((err as Error).message, /cannot ship: 2 unresolved finding\(s\)/);
+      assert.ok((err as Error).message.includes(open.id));
+      assert.ok((err as Error).message.includes(second.id));
+      return true;
+    },
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
 test('recordVerdict allows a ship with an override and records the reason', () => {
   const store = new TraceStore(':memory:');
   const { open } = seedRelease(store);
@@ -239,7 +281,10 @@ test('recordVerdict allows a ship with an override and records the reason', () =
   });
 
   assert.equal(verdict.content.verdict, 'ship');
-  assert.deepEqual(verdict.content.override, { reason: 'hotfix, accepted by release manager' });
+  assert.deepEqual(verdict.content.override, {
+    reason: 'hotfix, accepted by release manager',
+    findings: [open.id],
+  });
 });
 
 test('recordVerdict rejects an override supplied with a hold verdict', () => {
@@ -274,8 +319,13 @@ test('recordVerdict allows a ship when no signal is live', () => {
   const verdict = recordVerdict(store, {
     releaseRef: 'release/1', verdict: 'ship', reason: 'All requirement questions answered.',
     cites: [req.id], changed: ['PROJ-42'], provenance: ai,
+    // I1: sent defensively, as a caller that always includes `override` would. With no live
+    // signal, nothing was actually overridden, so it must not be recorded — a stray
+    // `override` here would make the Inspector's "⚠ OVERRIDDEN" flag a lie.
+    override: { reason: 'just in case' },
   });
   assert.equal(verdict.content.verdict, 'ship');
+  assert.equal(verdict.content.override, null);
 });
 
 test('recordVerdict preserves AI provenance and does not override promptVersion', () => {
@@ -316,6 +366,21 @@ test('recordVerdict normalizes padded changed refs and signals persists', () => 
     /cannot ship: 1 unresolved finding\(s\)/,
   );
   assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+// I5: the throw-only test above never touches a successful write, so a mutant that stores
+// `input.changed` unnormalized still passes 73/73. This drives padded, duplicate refs
+// through a write that actually succeeds and checks what got recorded.
+test('recordVerdict normalizes content.changed on a successful write', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1', verdict: 'hold', reason: 'holding',
+    cites: [open.id], changed: ['  PROJ-42\n', 'PROJ-42', ' PROJ-42 '], provenance: ai,
+  });
+
+  assert.deepEqual(verdict.content.changed, ['PROJ-42']);
 });
 
 test('recordVerdict stores unmatched refs in verdict content', () => {

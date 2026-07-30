@@ -224,9 +224,14 @@ export function createServer(store: TraceStore) {
           .min(1)
           .describe('The same list passed to assess_release_risk. Signals are recomputed from it.'),
         override: z
-          .object({ reason: z.string() })
+          .object({
+            reason: z.string().describe('Why you are shipping anyway. Blank is rejected.'),
+          })
           .optional()
-          .describe('Required to ship while a signal is live. Recorded on the verdict.'),
+          .describe(
+            'Required to ship while a signal is live; recorded on the verdict together with ' +
+              "the findings it overrode. Throws if given alongside verdict: 'hold'.",
+          ),
         provenance: ProvenanceInput.describe('Who decided. AI must give `model` and `promptVersion`.'),
       },
     },

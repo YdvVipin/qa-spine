@@ -7,6 +7,7 @@
 // Credentials are read from the environment and never written to disk. Nothing in src/
 // knows what Jira is — this is a loader, not a feature.
 import { mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { TraceStore } from '../src/trace/store.ts';
 
 const { JIRA_SITE, JIRA_EMAIL, JIRA_TOKEN } = process.env;
@@ -20,8 +21,13 @@ if (!jql) {
   process.exit(1);
 }
 
-const path = process.env.QA_SPINE_DB ?? '.qa-spine/trace.db';
-mkdirSync(path.replace(/\/[^/]+$/, ''), { recursive: true });
+// M4: `dirname()` from node:path, not a regex — `resolve()` first so a slash-free
+// QA_SPINE_DB (e.g. `trace.db`) still has a real parent directory to create. A regex like
+// `path.replace(/\/[^/]+$/, '')` is a no-op on that input, so `mkdirSync` would create a
+// directory named `trace.db` and the store could never open it. src/server.ts does this
+// the same way.
+const path = resolve(process.env.QA_SPINE_DB ?? '.qa-spine/trace.db');
+mkdirSync(dirname(path), { recursive: true });
 const store = new TraceStore(path);
 
 // v2, not v3: v3 returns `description` as Atlassian Document Format JSON, which would feed
@@ -48,7 +54,12 @@ if (!res.ok) {
 let imported = 0;
 let skipped = 0;
 for (const issue of (await res.json()).issues ?? []) {
-  const text = String(issue.fields?.description ?? '').trim();
+  // M5: only a string is accepted. v3 (and the /search/jql migration noted above) returns
+  // `description` as Atlassian Document Format JSON, and `String({...})` stringifies to the
+  // non-blank '[object Object]' — that would pass the blank check below and get recorded
+  // permanently into this append-only store.
+  const description = issue.fields?.description;
+  const text = typeof description === 'string' ? description.trim() : '';
   // audit_requirement rejects blank text anyway; skipping keeps the store honest.
   if (!text) {
     skipped++;

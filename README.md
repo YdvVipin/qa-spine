@@ -145,18 +145,32 @@ front.
 
 `recordVerdict` also validates at the function boundary, not only in the MCP tool's Zod
 schema: a blank `releaseRef`, a blank `reason`, a `verdict` that isn't exactly `ship` or
-`hold`, an unknown id in `cites`, and an `override` supplied alongside a `hold` are all
-rejected before anything is written. That matters for any caller that reaches `src/release.ts`
-directly, skipping the wire schema entirely.
+`hold`, a non-array `cites`, an unknown id in `cites`, and an `override` supplied alongside a
+`hold` are all rejected before anything is written. That matters for any caller that reaches
+`src/release.ts` directly, skipping the wire schema entirely.
 
-A `ship` is rejected while a signal is live unless the call carries `override: { reason }`,
-which is recorded on the verdict rather than silently accepted. Nothing prevents an agent from
-writing its own override, exactly as nothing prevents it from answering its own audit
-questions — this is visibility, not prevention. The Inspector is where that visibility shows
-up: a verdict's row in the artifact list leads with `SHIP` or `HOLD`, prefixed
+A `ship` is rejected while a signal is live unless the call carries `override: { reason }`.
+That override is recorded on the verdict only when it actually overrode something — a caller
+that defensively sends `override` on every submission gets nothing recorded when no signal was
+live — and when it is recorded, it carries not just the reason but the id of every finding
+that was live at the time: the store holds the whole fact, not just half of it. Nothing
+prevents an agent from writing its own override, exactly as nothing prevents it from answering
+its own audit questions — this is visibility, not prevention. The Inspector is where that
+visibility shows up: a verdict's row in the artifact list leads with `SHIP` or `HOLD`, prefixed
 `⚠ OVERRIDDEN` when an override is present, and its detail view puts the override reason in a
-callout above the JSON content panel. An overridden ship is not buried in the record — it is
-the first thing a human sees.
+callout that comes before the JSON content panel in the page — on a wide viewport the
+responsive grid lays that callout out to the left rather than above, but it is still the first
+panel a human's eye meets. An overridden ship is not buried in the record — it is the first
+thing a human sees.
+
+None of this is enforced anywhere but `release_submit` itself. `trace_record` can append a
+`type: 'verdict'` artifact directly — `examples/seed-demo.ts` does exactly that — with no
+signal check and no override, because the gate lives in `recordVerdict`, not in the store. And
+the veto itself can be defeated cleanly: appending any artifact with a `supersedes` edge to an
+open finding retires it, whether that edge came from `audit_answer` or a raw `trace_record`
+call, after which `assess_release_risk` sees no signal at all and a `ship` records no override
+— the release then looks exactly like one with nothing outstanding, which is the more
+dangerous of the two holes precisely because the record looks clean.
 
 Real ticket text, instead of hand-written fixtures:
 

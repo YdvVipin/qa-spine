@@ -34,6 +34,15 @@ export type RiskSignal = {
  * Changed-ness is never inferred transitively. `chain()` walks both directions without bound,
  * so deriving it through edges would let one changed file mark every requirement in the store
  * as changed, and every release would block on everything.
+ *
+ * ponytail: a finding retires the moment anything supersedes it, regardless of what wrote that
+ * edge — `openFindings` only checks that a `supersedes` edge exists, not that it came from
+ * `audit_answer`. So `trace_record` can retire a live finding directly (or write a `type:
+ * 'verdict'` artifact outright, bypassing this gate altogether), leaving no signal, no
+ * override, and no trace here that either happened — the same hole `audit_answer` documents
+ * for its own guard at src/audit.ts:206-213. Upgrade path: same as there, a store-level
+ * guard or constraint that only the gated recorders can satisfy, once this project has a
+ * migration story.
  */
 export function assessReleaseRisk(
   store: TraceStore,
@@ -49,10 +58,18 @@ export function assessReleaseRisk(
 
   // ponytail: one openFindings query per changed requirement. Fine for a release; batch into
   // a single query if a release ever touches hundreds of requirements.
-  // ponytail: openFindings requires a derived_from edge; orphaned findings (no requirement edge)
-  // are invisible here. This diverges from openQuestions in src/audit.ts, which surfaces them
-  // to prevent hidden work — but a parentless finding cannot be attributed to a changed area,
-  // so the veto cannot gate on it. Upgrade: surface orphaned findings as unresolved context.
+  // ponytail: an orphaned finding (no derived_from edge to a requirement) never reaches
+  // `signals` — not because it "cannot be attributed to a changed area": bySourceRef(changed)
+  // already attributed it, it is sitting in `matched` a few lines up, matched by the same
+  // exact-sourceRef rule as everything else. It is dropped because `requirements` above keeps
+  // only `matched.filter(a => a.type === 'requirement')`, and openFindings(500, req.id) below
+  // only returns findings linked to that one requirement id — an orphan satisfies neither.
+  // The real reason to exclude it: a finding with no parent requirement has no requirement
+  // stage to be a "requirement-stage finding" of. openQuestions in src/audit.ts (see the
+  // comment at src/audit.ts:167) deliberately disagrees and surfaces exactly this case, with
+  // `requirement: null`, so a broken edge cannot hide work from the audit queue — the two
+  // modules read the same shape differently on purpose. Upgrade: surface orphaned findings
+  // here too, as unresolved context rather than a blocking signal.
   const signals: RiskSignal[] = requirements.flatMap((req) =>
     store.openFindings(500, req.id).map((f) => ({
       kind: 'unresolved_finding_on_changed_area' as const,
@@ -131,6 +148,7 @@ export function recordVerdict(
     throw new Error(`verdict must be 'ship' or 'hold', got ${JSON.stringify(input.verdict)}`);
   }
 
+  if (!Array.isArray(input.cites)) throw new Error('cites must be an array');
   const cites = [...new Set(input.cites)];
   for (const id of cites) {
     if (!store.get(id)) throw new Error(`cites unknown artifact ${id}`);
@@ -141,13 +159,12 @@ export function recordVerdict(
     overrideReason = input.override.reason?.trim() ?? '';
     if (!overrideReason) throw new Error('override.reason must not be blank');
   }
-  const override = overrideReason ? { reason: overrideReason } : null;
-  if (override && input.verdict === 'hold') {
+  if (overrideReason && input.verdict === 'hold') {
     throw new Error('override is only meaningful with a ship verdict');
   }
 
-  const { signals, matched } = assessReleaseRisk(store, { changed: input.changed });
-  if (input.verdict === 'ship' && signals.length && !override) {
+  const { release, signals, matched } = assessReleaseRisk(store, { changed: input.changed });
+  if (input.verdict === 'ship' && signals.length && !overrideReason) {
     const named = signals
       .map((s) => `${s.detail.findingId} (${s.detail.sourceRef ?? 'no sourceRef'})`)
       .join(', ');
@@ -157,13 +174,26 @@ export function recordVerdict(
     );
   }
 
+  // I1/I2: record an override only when it actually overrode a live signal — otherwise a
+  // defensively-always-sent override would land on a clean release, and the Inspector's
+  // "⚠ shipped over unresolved findings" callout would be asserting something false. And
+  // when it did override something, record which findings were live at decision time: "we
+  // shipped over an open question, and here is who said that was fine" is only half a fact
+  // without knowing which question.
+  const override =
+    overrideReason && signals.length
+      ? { reason: overrideReason, findings: signals.map((s) => s.detail.findingId) }
+      : null;
+
   return store.record({
     type: 'verdict',
     sourceRef: releaseRef,
     content: {
       verdict: input.verdict,
       reason,
-      changed: [...new Set(input.changed.map((r) => r.trim()).filter((r) => r))],
+      // M1: reuse the normalization assessReleaseRisk already did, rather than re-deriving
+      // an identical `changed` list here — a duplicate that could silently drift.
+      changed: release.changed,
       unmatched: matched.unmatched,
       override,
     },
