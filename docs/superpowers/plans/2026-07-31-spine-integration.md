@@ -47,12 +47,16 @@
 - Consumes: existing `TraceStore.record(input)` and `dbPath()`.
 - Produces: CLI contract `node src/server.ts record` — reads a JSON object on stdin; on success prints the created artifact as JSON and exits 0; on any failure prints `{"error": "..."}` and exits 1. Task 2 depends on exactly this contract.
 
-- [ ] **Step 1: Create the branch**
+- [ ] **Step 1: Confirm the branch**
+
+The `spine-integration` branch already exists in qa-spine — the plan itself was committed on it.
 
 ```bash
 cd /home/vipin-yadav/Desktop/MLProjects/qa-spine
-git checkout -b spine-integration
+git branch --show-current   # must print: spine-integration
 ```
+
+If it prints anything else, run `git checkout spine-integration`. Do not create it again.
 
 - [ ] **Step 2: Write the failing tests**
 
