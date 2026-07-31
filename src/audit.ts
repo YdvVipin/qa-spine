@@ -150,3 +150,85 @@ export function submitFindings(
     }),
   );
 }
+
+/** The requirement a finding came from, if that edge is intact. */
+function requirementOf(store: TraceStore, findingId: string): Artifact | undefined {
+  return store
+    .edgesFrom(findingId)
+    .filter((e) => e.relation === 'derived_from')
+    .map((e) => store.get(e.toArtifactId))
+    .find((a) => a?.type === 'requirement');
+}
+
+/**
+ * Every question still waiting on an answer, each carrying enough of its requirement to be
+ * answered without a second call. A finding whose parent requirement is missing still
+ * appears, with `requirement: null` — a broken edge must not hide work from the queue.
+ */
+export function openQuestions(store: TraceStore, requirementId?: string) {
+  const open = store.openFindings(500, requirementId).map((f) => {
+    const parent = requirementOf(store, f.id);
+    return {
+      findingId: f.id,
+      category: f.content.category ?? null,
+      quote: f.content.quote ?? null,
+      question: f.content.question ?? null,
+      confidence: f.content.confidence ?? null,
+      requirement: parent
+        ? { id: parent.id, sourceRef: parent.sourceRef, text: String(parent.content.text ?? '') }
+        : null,
+    };
+  });
+  return { open };
+}
+
+/**
+ * Records a human's or an agent's answer to an open question. The `supersedes` edge is what
+ * retires the finding — the chain view already treats a finding with nothing superseding it
+ * as unresolved, so this needs no new concept.
+ *
+ * Provenance is recorded exactly as given. Unlike `submitFindings`, the server does not own
+ * this artifact and has no rubric version to stamp: an AI answer stays visibly an AI answer.
+ */
+export function recordAnswer(
+  store: TraceStore,
+  input: { findingId: string; answer: string; provenance: Provenance },
+): Artifact {
+  const finding = store.get(input.findingId);
+  if (!finding) throw new Error(`no artifact with id ${input.findingId}`);
+  if (finding.type !== 'finding') {
+    throw new Error(`artifact ${input.findingId} is a ${finding.type}, not a finding`);
+  }
+
+  const answer = input.answer.trim();
+  if (!answer) throw new Error('answer must not be blank');
+
+  // ponytail: check-then-write, reachable across processes, not just within one — `npm run
+  // inspect` and the MCP server each open the same dbPath() as a separate process, so two
+  // processes can both pass this check before either writes, leaving two `supersedes` edges
+  // on one finding. `trace_record` also bypasses this guard entirely, since it writes
+  // straight to the store. Upgrade path: a partial unique index —
+  // `CREATE UNIQUE INDEX ... ON edges(to_id) WHERE relation = 'supersedes'` — deliberately
+  // not added here, since it would hard-fail on any existing store that already holds two
+  // `supersedes` edges on one finding, and this project has no migration story.
+  const resolver = store.edgesTo(input.findingId).find((e) => e.relation === 'supersedes');
+  if (resolver) {
+    throw new Error(
+      `finding ${input.findingId} is already resolved by ${resolver.fromArtifactId} — ` +
+        'supersede that instead of adding another answer',
+    );
+  }
+
+  const requirement = requirementOf(store, input.findingId);
+  return store.record({
+    type: 'answer',
+    sourceRef: requirement?.sourceRef ?? finding.sourceRef,
+    content: { text: answer },
+    provenance: input.provenance,
+    links: [
+      { to: input.findingId, relation: 'supersedes' },
+      // A finding without a parent requirement is still answerable.
+      ...(requirement ? [{ to: requirement.id, relation: 'derived_from' as const }] : []),
+    ],
+  });
+}

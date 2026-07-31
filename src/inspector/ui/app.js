@@ -27,6 +27,12 @@ const ago = (iso) => new Date(iso).toLocaleString();
 /** One line that tells you what an artifact is without opening it. */
 function summarise(a) {
   const c = a.content ?? {};
+  // A verdict leads with its decision, and an override says so first: an overridden ship and a
+  // clean ship are the two rows a human most needs to tell apart at a glance.
+  if (a.type === 'verdict' && c.verdict) {
+    const flag = c.override ? '⚠ OVERRIDDEN ' : '';
+    return `${flag}${String(c.verdict).toUpperCase()} — ${c.reason ?? ''}`;
+  }
   return c.text ?? c.quote ?? c.name ?? c.reason ?? c.verdict ?? c.note ?? JSON.stringify(c);
 }
 
@@ -138,7 +144,10 @@ function sourcePanel(finding, requirement) {
 }
 
 function reviewBox(artifact, existing) {
-  const note = h('textarea', { placeholder: 'why? (optional)' });
+  const note = h('textarea', {
+    placeholder: 'why? (optional)',
+    ariaLabel: 'reason for this verdict (optional)',
+  });
   const status = h('span', { className: 'said' });
 
   const submit = async (verdict) => {
@@ -201,6 +210,19 @@ async function detailView(id) {
     .map((e) => byId.get(e.toArtifactId))
     .find((n) => n?.type === 'requirement');
 
+  // The override is the one thing in a verdict a human must not miss, so it gets a callout
+  // rather than a line in the JSON dump below.
+  const override =
+    a.type === 'verdict' && a.content?.override
+      ? h(
+          'section',
+          { className: 'panel' },
+          h('h2', {}, 'override'),
+          h('p', { className: 'flag verdict-bad' }, '⚠ shipped over unresolved findings'),
+          h('p', {}, String(a.content.override.reason ?? '')),
+        )
+      : null;
+
   const content = h(
     'section',
     { className: 'panel' },
@@ -212,6 +234,7 @@ async function detailView(id) {
     h(
       'div',
       { className: 'cols' },
+      override,
       a.type === 'finding' && requirement ? sourcePanel(a, requirement) : null,
       content,
       provenancePanel(a),
@@ -256,16 +279,25 @@ async function chainView(id) {
           const unresolved =
             n.type === 'finding' &&
             !edges.some((e) => e.toArtifactId === n.id && e.relation === 'supersedes');
+          // An answer produced by AI is marked in the graph, not just in its detail panel:
+          // an agent resolving its own audit finding should be visible at a glance.
+          const aiAnswer = n.type === 'answer' && n.provenance.producer === 'ai';
           const card = h(
             'a',
             {
               className:
-                'node' + (n.id === chain.root.id ? ' root' : '') + (unresolved ? ' unresolved' : ''),
+                'node' +
+                (n.id === chain.root.id ? ' root' : '') +
+                (unresolved ? ' unresolved' : '') +
+                (aiAnswer ? ' ai-answer' : ''),
               href: `#/a/${n.id}`,
             },
             h('span', { className: 'id' }, n.sourceRef ?? n.id),
             h('span', { className: 'summary' }, summarise(n).slice(0, 60)),
             unresolved ? h('span', { className: 'flag' }, '● unresolved') : null,
+            // Colour alone (var(--ai), shared with the `verifies` edge) is not a safe way to
+            // mark an agent resolving its own finding — this text flag is the actual signal.
+            aiAnswer ? h('span', { className: 'flag' }, '● ai-answered') : null,
           );
           cards.set(n.id, card);
           return card;
@@ -287,6 +319,7 @@ async function chainView(id) {
         h('span', {}, h('i', { style: `background:${colour}` }), rel),
       ),
       h('span', { className: 'verdict-bad' }, '● finding nothing has resolved'),
+      h('span', { className: 'producer-ai' }, '● ai-answered — an AI resolved its own finding'),
     ),
   );
 
@@ -327,13 +360,129 @@ async function chainView(id) {
   addEventListener('resize', draw);
 }
 
+// --------------------------------------------------------------- audit queue
+
+/** One open question: the rule that fired, the quote in context, and a box to answer it. */
+function questionCard(q) {
+  const box = h('textarea', {
+    placeholder: 'answer…',
+    rows: 2,
+    ariaLabel: 'answer to this audit question',
+  });
+  const status = h('span', { className: 'said' });
+
+  const submit = async () => {
+    const res = await fetch('/api/answer', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ findingId: q.findingId, answer: box.value }),
+    });
+    if (res.ok) return route(); // answered questions leave the queue
+    status.textContent = (await res.json()).error ?? 'failed';
+    status.className = 'said verdict-bad';
+  };
+
+  // Show the quote inside its surrounding text, so a mis-quote is as obvious here as in
+  // the detail view. Windowed to 40 characters either side to keep cards scannable.
+  const text = q.requirement?.text ?? '';
+  const at = q.requirement && q.quote ? text.indexOf(q.quote) : -1;
+  const context = !q.requirement
+    ? h('span', { className: 'flag' }, '⚠ no requirement linked')
+    : at === -1
+      ? h('span', { className: 'flag' }, q.quote ? `⚠ "${q.quote}" not found in source` : '—')
+      : h(
+          'span',
+          {},
+          (at > 40 ? '…' : '') + text.slice(Math.max(0, at - 40), at),
+          h('mark', {}, q.quote),
+          text.slice(at + q.quote.length, at + q.quote.length + 40),
+        );
+
+  return h(
+    'div',
+    { className: 'q' },
+    h(
+      'div',
+      { className: 'q-top' },
+      h('span', { className: 'q-rule' }, q.category ?? '—'),
+      h('span', {}, `conf ${q.confidence ?? '—'}`),
+      h('a', { className: 'q-src', href: `#/a/${q.findingId}` },
+        q.requirement?.sourceRef ?? q.findingId),
+    ),
+    h('div', { className: 'q-quote' }, context),
+    h('div', { className: 'q-ask' }, q.question ?? ''),
+    h('div', { className: 'q-answer' },
+      box,
+      h('button', { className: 'good', textContent: 'Record answer', onclick: submit }),
+      status),
+  );
+}
+
+/** An answered question. Producer and model are shown because that is the only safeguard
+    against an agent quietly answering its own audit. */
+function answeredCard(a) {
+  const p = a.provenance;
+  return h(
+    'div',
+    { className: 'q done' },
+    h(
+      'div',
+      { className: 'q-top' },
+      h('span', { className: 'producer-' + p.producer }, p.producer),
+      p.model ? h('span', {}, p.model) : null,
+      h('a', { className: 'q-src', href: `#/a/${a.id}` }, a.sourceRef ?? a.id),
+      h('span', {}, ago(a.createdAt)),
+    ),
+    // Truncated like the list view's row (.slice(0, 90)): this card is a queue row, not a
+    // detail panel — the full answer is one click away at #/a/<id>, same as any other artifact.
+    h('div', { className: 'q-ask' }, summarise(a).slice(0, 90)),
+  );
+}
+
+async function auditView(show) {
+  const showing = show === 'answered' ? 'answered' : 'open';
+  const filters = h(
+    'div',
+    { className: 'filters' },
+    ['open', 'answered'].map((f) =>
+      h('button', {
+        textContent: f,
+        ariaPressed: String(showing === f),
+        onclick: () => (location.hash = `#/audit?show=${f}`),
+      }),
+    ),
+  );
+
+  if (showing === 'answered') {
+    const { artifacts } = await get('/api/artifacts?type=answer');
+    crumbs.replaceChildren(`${artifacts.length} answered`);
+    return view.replaceChildren(
+      filters,
+      artifacts.length
+        ? h('div', { className: 'queue' }, artifacts.map(answeredCard))
+        : h('p', { className: 'empty' }, 'Nothing answered yet.'),
+    );
+  }
+
+  const { open } = await get('/api/open');
+  crumbs.replaceChildren(`${open.length} question${open.length === 1 ? '' : 's'} open`);
+  view.replaceChildren(
+    filters,
+    open.length
+      ? h('div', { className: 'queue' }, open.map(questionCard))
+      : h('p', { className: 'empty' }, 'Nothing to answer.'),
+  );
+}
+
 // ------------------------------------------------------------------ routing
 
 function route() {
+  const query = new URLSearchParams(location.hash.split('?')[1] ?? '');
   const [, path, id] = location.hash.match(/^#\/(a|c)\/(.+)$/) ?? [];
   if (path === 'a') return detailView(decodeURIComponent(id));
   if (path === 'c') return chainView(decodeURIComponent(id));
-  return listView(new URLSearchParams(location.hash.split('?')[1] ?? '').get('type'));
+  if (location.hash.startsWith('#/audit')) return auditView(query.get('show'));
+  return listView(query.get('type'));
 }
 
 // Cross-fade view swaps with the native View Transitions API. route() is async for the

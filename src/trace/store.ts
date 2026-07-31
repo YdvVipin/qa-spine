@@ -142,8 +142,62 @@ export class TraceStore {
     return (rows as Row[]).map(toArtifact);
   }
 
-  edgesFrom(id: string): Edge[] {
-    const rows = this.db.prepare('SELECT * FROM edges WHERE from_id = ?').all(id) as {
+  /**
+   * Artifacts whose sourceRef is one of `refs` — the join between "what this release
+   * changed" and what the spine knows, since every artifact already carries the ref it
+   * came from. Matching is exact equality.
+   *
+   * ponytail: exact match only, no prefix or glob. A caller must pass both file paths and
+   * ticket keys. If path-shaped refs ever need to reach their requirement on their own,
+   * add prefix matching or a published path->requirement map.
+   */
+  bySourceRef(refs: string[]): Artifact[] {
+    // `IN ()` is a syntax error in SQLite, not an empty result set.
+    if (!refs.length) return [];
+    const holes = refs.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT * FROM artifacts WHERE source_ref IN (${holes}) ORDER BY created_at`)
+      .all(...refs);
+    return (rows as Row[]).map(toArtifact);
+  }
+
+  /**
+   * Findings nothing has superseded — the audit queue's worklist. Asked in SQL rather than
+   * by listing every finding and filtering in JS, which would be right only at today's size.
+   *
+   * `requirementId`, when given, filters in the same query rather than after it: filtering
+   * a capped, recency-ordered result in JS could drop a genuinely-open finding on the
+   * requested requirement just because enough newer findings on *other* requirements filled
+   * the window first.
+   *
+   * ponytail: `limit` is the only paging. A queue a human works down does not need more;
+   * if one ever holds more open findings than this, it needs real paging, not a bigger number.
+   */
+  openFindings(limit = 500, requirementId?: string): Artifact[] {
+    const requirementFilter = requirementId
+      ? `AND EXISTS (
+            SELECT 1 FROM edges d WHERE d.from_id = a.id AND d.relation = 'derived_from' AND d.to_id = ?
+          )`
+      : '';
+    const params = requirementId ? [requirementId, limit] : [limit];
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM artifacts a
+          WHERE a.type = 'finding'
+            AND NOT EXISTS (
+              SELECT 1 FROM edges e WHERE e.to_id = a.id AND e.relation = 'supersedes'
+            )
+            ${requirementFilter}
+          ORDER BY a.created_at DESC
+          LIMIT ?`,
+      )
+      .all(...params);
+    return (rows as Row[]).map(toArtifact);
+  }
+
+  /** Shared by edgesFrom/edgesTo. `column` is a closed union, never caller input. */
+  private edgesBy(column: 'from_id' | 'to_id', id: string): Edge[] {
+    const rows = this.db.prepare(`SELECT * FROM edges WHERE ${column} = ?`).all(id) as {
       from_id: string;
       to_id: string;
       relation: string;
@@ -157,6 +211,15 @@ export class TraceStore {
         createdAt: e.created_at,
       }),
     );
+  }
+
+  edgesFrom(id: string): Edge[] {
+    return this.edgesBy('from_id', id);
+  }
+
+  /** Incoming edges. What resolves a finding points AT it, so edgesFrom cannot find it. */
+  edgesTo(id: string): Edge[] {
+    return this.edgesBy('to_id', id);
   }
 
   /**

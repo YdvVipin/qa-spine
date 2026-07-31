@@ -6,7 +6,14 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { TraceStore } from './trace/store.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
-import { auditRequirement, submitFindings, AuditFinding } from './audit.ts';
+import {
+  auditRequirement,
+  submitFindings,
+  AuditFinding,
+  openQuestions,
+  recordAnswer,
+} from './audit.ts';
+import { assessReleaseRisk, recordVerdict } from './release.ts';
 
 export const VERSION = '0.1.0';
 
@@ -118,6 +125,119 @@ export function createServer(store: TraceStore) {
     (args) => {
       try {
         return json({ recorded: submitFindings(store, args).map((a) => a.id) });
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'audit_open',
+    {
+      description:
+        'List ambiguity questions still waiting on an answer. Each carries the rule it came ' +
+        'from, the quoted span, and the requirement text needed to answer it, so no second ' +
+        'call is required. Omit requirementId for everything outstanding.',
+      inputSchema: {
+        requirementId: z.string().optional().describe('Limit to one requirement.'),
+      },
+    },
+    ({ requirementId }) => {
+      try {
+        return json(openQuestions(store, requirementId));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'audit_answer',
+    {
+      description:
+        'Answer an open ambiguity question. The answer supersedes the finding, which retires ' +
+        'it. Rejects a blank answer, an id that is not a finding, and a finding something has ' +
+        'already resolved. Your provenance is recorded as given and is not rewritten: an ' +
+        'answer produced by AI stays visibly an AI answer.',
+      inputSchema: {
+        findingId: z.string().describe('The finding whose question you are answering.'),
+        answer: z.string().describe('The answer, in full. Blank answers are rejected.'),
+        provenance: ProvenanceInput.describe(
+          'Who is answering. AI must give `model` and `promptVersion`.',
+        ),
+      },
+    },
+    (args) => {
+      try {
+        return json(recordAnswer(store, args));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'assess_release_risk',
+    {
+      description:
+        'Given the areas a release touches, return every unresolved requirement-stage finding ' +
+        'on those areas, plus the surrounding artifacts as unscored evidence. Makes no model ' +
+        'call: reason over what it returns, then record your brief with `release_submit`. ' +
+        'Every signal blocks a ship verdict.',
+      inputSchema: {
+        changed: z
+          .array(z.string())
+          .min(1)
+          .describe('sourceRefs this release touches — JIRA keys and file paths. Matched exactly.'),
+        releaseRef: z
+          .string()
+          .optional()
+          .describe('e.g. release/2026.7.3. Becomes the verdict sourceRef on submit.'),
+      },
+    },
+    (args) => {
+      try {
+        return json(assessReleaseRisk(store, args));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'release_submit',
+    {
+      description:
+        'Record a release verdict. Signals are recomputed from `changed` and are never taken ' +
+        'from the caller, so a `ship` cannot be waved through by omitting a blocker: it is ' +
+        'rejected while any signal is live unless `override` gives a reason, which is recorded. ' +
+        'Every id in `cites` must exist. Your provenance is recorded as given.',
+      inputSchema: {
+        releaseRef: z.string().describe('e.g. release/2026.7.3.'),
+        verdict: z.enum(['ship', 'hold']),
+        reason: z.string().describe('The one-page brief. Blank is rejected.'),
+        cites: z
+          .array(z.string())
+          .describe('Artifact ids the brief refers to. Each becomes a derived_from edge.'),
+        changed: z
+          .array(z.string())
+          .min(1)
+          .describe('The same list passed to assess_release_risk. Signals are recomputed from it.'),
+        override: z
+          .object({
+            reason: z.string().describe('Why you are shipping anyway. Blank is rejected.'),
+          })
+          .optional()
+          .describe(
+            'Required to ship while a signal is live; recorded on the verdict together with ' +
+              "the findings it overrode. Throws if given alongside verdict: 'hold'.",
+          ),
+        provenance: ProvenanceInput.describe('Who decided. AI must give `model` and `promptVersion`.'),
+      },
+    },
+    (args) => {
+      try {
+        return json(recordVerdict(store, args));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

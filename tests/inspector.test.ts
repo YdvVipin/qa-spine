@@ -62,7 +62,7 @@ test('a chain request carries provenance through to the UI', async (t) => {
   assert.equal((await api('/api/chain/finding_nope')).status, 404);
 });
 
-test('reviewing is the only write, and it lands as a linked artifact', async (t) => {
+test('reviewing is one of two human-authored writes, and it lands as a linked artifact', async (t) => {
   const store = new TraceStore(':memory:');
   const { finding } = seed(store);
   const api = await serve(store, t);
