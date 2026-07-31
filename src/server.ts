@@ -280,10 +280,10 @@ export function reviewExport(store: TraceStore): string {
 if (import.meta.filename === process.argv[1]) {
   const path = dbPath();
   mkdirSync(dirname(path), { recursive: true });
-  const store = new TraceStore(path);
 
   switch (process.argv[2]) {
     case 'inspect': {
+      const store = new TraceStore(path);
       const { startInspector } = await import('./inspector/server.ts');
       const port = Number(process.argv[3] ?? process.env.QA_SPINE_PORT ?? 4700);
       await startInspector(store, port);
@@ -291,13 +291,17 @@ if (import.meta.filename === process.argv[1]) {
       break;
     }
     case 'review-export': {
+      const store = new TraceStore(path);
       const jsonl = reviewExport(store);
       if (jsonl) console.log(jsonl);
       break;
     }
     case 'record': {
       // Payload arrives on stdin, not argv: it carries test bodies and heal diffs,
-      // which are fragile to quote and would eventually exceed ARG_MAX.
+      // which are fragile to quote and would eventually exceed ARG_MAX. Store
+      // construction happens inside this try too — a lock contention error (or
+      // any other open failure) must come back as {"error": ...} on stdout, not
+      // a raw stack trace on stderr with empty stdout.
       try {
         if (process.stdin.isTTY) {
           console.log(JSON.stringify({ error: 'record reads a JSON payload on stdin; pipe one in' }));
@@ -307,6 +311,7 @@ if (import.meta.filename === process.argv[1]) {
         // ponytail: caller holding stdin open without closing still hangs indefinitely; upgrade path is read timeout
         const chunks: Buffer[] = [];
         for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+        const store = new TraceStore(path);
         console.log(JSON.stringify(store.record(JSON.parse(Buffer.concat(chunks).toString('utf8')))));
       } catch (err) {
         // One JSON object on stdout either way, so the caller never parses stderr.
@@ -315,7 +320,9 @@ if (import.meta.filename === process.argv[1]) {
       }
       break;
     }
-    default:
+    default: {
+      const store = new TraceStore(path);
       await createServer(store).connect(new StdioServerTransport());
+    }
   }
 }

@@ -1,9 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+/**
+ * Async record call for true concurrency (execFileSync would serialize the
+ * calls). Unlike execFileSync, execFile has no `input` option — stdin must be
+ * written and closed by hand, or the child's stdin-reading loop hangs forever.
+ */
+function runRecordAsync(
+  payload: unknown,
+  db: string,
+): Promise<{ code: number; out: Record<string, any> }> {
+  return new Promise((resolvePromise) => {
+    const child = execFile(
+      'node',
+      ['src/server.ts', 'record'],
+      { encoding: 'utf8', env: { ...process.env, QA_SPINE_DB: db } },
+      (err: any, stdout) => {
+        let out: Record<string, any> = {};
+        try {
+          out = JSON.parse(stdout || '{}');
+        } catch {
+          out = { error: `unparseable stdout: ${stdout}` };
+        }
+        resolvePromise({ code: err ? (err.code ?? 1) : 0, out });
+      },
+    );
+    child.stdin!.end(typeof payload === 'string' ? payload : JSON.stringify(payload));
+  });
+}
 
 /** Runs the subcommand against a throwaway DB. Returns exit code and parsed stdout. */
 function runRecord(payload: unknown, db: string): { code: number; out: Record<string, any> } {
@@ -84,4 +112,34 @@ test('record rejects a link to an artifact that does not exist', () => {
     assert.equal(code, 1);
     assert.match(String(out.error), /does not exist/);
   });
+});
+
+test('concurrent record calls all succeed under lock contention (I3)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qa-spine-cli-concurrent-'));
+  const db = join(dir, 'trace.db');
+  try {
+    const N = 20;
+    const outcomes = await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        runRecordAsync(
+          {
+            type: 'requirement',
+            content: { text: `concurrent write ${i}` },
+            provenance: { producer: 'human' },
+          },
+          db,
+        ),
+      ),
+    );
+
+    for (const { out } of outcomes) {
+      assert.ok(out && typeof out === 'object', `stdout must be valid JSON, got ${JSON.stringify(out)}`);
+    }
+    // The whole point of the busy_timeout: nobody should exit 1 with an empty/lock error.
+    const failed = outcomes.filter((o) => o.code !== 0);
+    assert.equal(failed.length, 0, `expected all ${N} writes to succeed, got: ${JSON.stringify(failed)}`);
+    assert.equal(outcomes.filter((o) => o.out.id).length, N);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
