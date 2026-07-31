@@ -298,9 +298,15 @@ if (import.meta.filename === process.argv[1]) {
     case 'record': {
       // Payload arrives on stdin, not argv: it carries test bodies and heal diffs,
       // which are fragile to quote and would eventually exceed ARG_MAX.
-      const chunks: Buffer[] = [];
-      for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
       try {
+        if (process.stdin.isTTY) {
+          console.log(JSON.stringify({ error: 'record reads a JSON payload on stdin; pipe one in' }));
+          process.exitCode = 1;
+          break;
+        }
+        // ponytail: caller holding stdin open without closing still hangs indefinitely; upgrade path is read timeout
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
         console.log(JSON.stringify(store.record(JSON.parse(Buffer.concat(chunks).toString('utf8')))));
       } catch (err) {
         // One JSON object on stdout either way, so the caller never parses stderr.
