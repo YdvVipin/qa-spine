@@ -295,6 +295,20 @@ if (import.meta.filename === process.argv[1]) {
       if (jsonl) console.log(jsonl);
       break;
     }
+    case 'record': {
+      // Payload arrives on stdin, not argv: it carries test bodies and heal diffs,
+      // which are fragile to quote and would eventually exceed ARG_MAX.
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+      try {
+        console.log(JSON.stringify(store.record(JSON.parse(Buffer.concat(chunks).toString('utf8')))));
+      } catch (err) {
+        // One JSON object on stdout either way, so the caller never parses stderr.
+        console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        process.exitCode = 1;
+      }
+      break;
+    }
     default:
       await createServer(store).connect(new StdioServerTransport());
   }
