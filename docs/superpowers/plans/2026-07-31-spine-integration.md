@@ -607,6 +607,10 @@ def test_a_failed_record_disables_the_job(monkeypatch):
         return None
 
     monkeypatch.setattr(loop_a.spine, "record", dead)
+    # enabled() must be forced True: _spine_record only latches spine_disabled when
+    # recording was actually switched on, so that a plain no-op (QA_SPINE_DIR unset)
+    # is not mistaken for a write failure.
+    monkeypatch.setattr(loop_a.spine, "enabled", lambda: True)
     job = {"id": "job_1", "spine_requirement_id": "requirement_zzz"}
     monkeypatch.setattr(loop_a, "get_job", lambda jid: job)
     monkeypatch.setattr(loop_a, "advance", lambda j, stage, **kw: j.update(kw) or j)
