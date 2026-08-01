@@ -419,21 +419,22 @@ test('renderBrief rejects an unknown id and a non-verdict id', () => {
 
 test('a citation that no longer resolves does not prevent rendering', () => {
   const store = new TraceStore(':memory:');
-  const { verdict } = seedBrief(store, {
-    override: null,
-  });
-  // An override naming a finding that was never written — the brief must still render.
+  // An override naming a finding that was never written — the brief must still render,
+  // and must simply omit the question it cannot resolve rather than failing.
   const orphaned = store.record({
     type: 'verdict',
     sourceRef: 'release/2',
     content: {
-      verdict: 'ship', reason: 'Shipping.', changed: ['PROJ-42'], unmatched: [],
+      verdict: 'ship', reason: 'Shipping the hotfix.', changed: ['PROJ-42'], unmatched: [],
       override: { reason: 'accepted', findings: ['finding_deadbeef'] },
     },
     provenance: ai,
   });
-  assert.match(renderBrief(store, orphaned.id), /Cleared to ship/);
-  assert.ok(verdict.id);
+
+  const html = renderBrief(store, orphaned.id);
+  assert.match(html, /Cleared to ship/);
+  assert.match(html, /accepted/);
+  assert.doesNotMatch(html, /Questions that were still open/);
 });
 ```
 
