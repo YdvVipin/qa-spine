@@ -109,6 +109,44 @@ export function assessReleaseRisk(
 }
 
 /**
+ * Tokens with no innocent English reading. Deliberately narrow: a denylist over
+ * ordinary words would reject "our finding was that…" or "could not trace the root
+ * cause" on a release-blocking call, which is the worst possible moment to argue
+ * about wording.
+ *
+ * ponytail: a denylist stops mechanical jargon leaks, not prose that is merely bad.
+ * Upgrade: a published rubric for brief prose, scored the way rubrics/ambiguity.json
+ * already scores requirements.
+ *
+ * ponytail: `covers` and `reviews` have innocent readings ("this covers the refund
+ * flow"), but appear in this system only as relation names and are rare in a release
+ * rationale. Upgrade: deny only the snake_case and camelCase forms.
+ */
+const INTERNAL_TERMS: RegExp[] = [
+  /\b(derived_from|supersedes|covers|verifies|contradicts|reviews)\b/i,
+  /\b(sourceRef|promptVersion|inputDigest)\b/i,
+  /\b(test_case|test_run)\b/i,
+  /\b(requirement|finding|test_case|test_run|defect|verdict|review|answer)_[0-9a-f]{8}\b/i,
+];
+
+/**
+ * The brief renders this text verbatim to a non-technical reader, so the constraint
+ * belongs here, where the prose is authored, rather than at render time where the
+ * only options are to mangle it or to show it.
+ */
+function assertPlainLanguage(field: string, text: string): void {
+  for (const pattern of INTERNAL_TERMS) {
+    const hit = text.match(pattern);
+    if (hit) {
+      throw new Error(
+        `${field} contains internal terminology (${JSON.stringify(hit[0])}) — ` +
+          'rewrite in plain language suitable for a project manager',
+      );
+    }
+  }
+}
+
+/**
  * Records a release verdict, refusing a `ship` while any signal is live.
  *
  * The signals are recomputed here from `changed` and are never taken from the caller. An
@@ -143,6 +181,7 @@ export function recordVerdict(
 
   const reason = input.reason.trim();
   if (!reason) throw new Error('reason must not be blank');
+  assertPlainLanguage('reason', reason);
 
   if (input.verdict !== 'ship' && input.verdict !== 'hold') {
     throw new Error(`verdict must be 'ship' or 'hold', got ${JSON.stringify(input.verdict)}`);
@@ -158,6 +197,7 @@ export function recordVerdict(
   if (input.override) {
     overrideReason = input.override.reason?.trim() ?? '';
     if (!overrideReason) throw new Error('override.reason must not be blank');
+    assertPlainLanguage('override.reason', overrideReason);
   }
   if (overrideReason && input.verdict === 'hold') {
     throw new Error('override is only meaningful with a ship verdict');

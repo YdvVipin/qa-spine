@@ -440,3 +440,87 @@ test('recordVerdict rejects blank override.reason and writes nothing', () => {
   );
   assert.equal(store.list(undefined, 1e9).length, before);
 });
+
+test('recordVerdict rejects a reason containing a relation name', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold',
+      reason: 'The test case was derived_from the ticket and never finished.',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /reason contains internal terminology \("derived_from"\)/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict rejects a reason containing an internal field name', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold',
+      reason: 'The sourceRef did not match anything we expected.',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /reason contains internal terminology \("sourceRef"\)/,
+  );
+});
+
+test('recordVerdict rejects a reason containing an artifact id', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold',
+      reason: 'We are holding because finding_9f8e2b1c was never answered.',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /reason contains internal terminology \("finding_9f8e2b1c"\)/,
+  );
+});
+
+test('recordVerdict accepts ordinary English that merely resembles jargon', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  // The false-positive guard, and the whole reason the denylist is narrow: each of
+  // these is a sentence a person would plausibly write under release pressure.
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1',
+    verdict: 'hold',
+    reason:
+      'Our finding was that the refund requirement was ambiguous, and we could not ' +
+      'trace the root cause before the cutoff. This is the spine of the checkout flow.',
+    cites: [open.id],
+    changed: ['PROJ-42'],
+    provenance: ai,
+  });
+  assert.equal(verdict.content.verdict, 'hold');
+});
+
+test('recordVerdict lints override.reason too, since the brief renders it verbatim', () => {
+  const store = new TraceStore(':memory:');
+  const { req, open } = seedRelease(store);
+  store.record({
+    type: 'answer',
+    content: { text: 'Retry twice, then alert on-call.' },
+    provenance: human,
+    links: [{ to: open.id, relation: 'supersedes' }, { to: req.id, relation: 'derived_from' }],
+  });
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'ship', reason: 'Everything is answered.',
+      cites: [req.id], changed: ['PROJ-42'],
+      override: { reason: 'accepted despite test_case coverage gaps' },
+      provenance: ai,
+    }),
+    /override\.reason contains internal terminology \("test_case"\)/,
+  );
+});
