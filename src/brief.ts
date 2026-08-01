@@ -120,13 +120,13 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   <h2>Why this decision was made</h2>
   <p>${reason ? esc(reason) : 'No explanation was provided with this decision.'}</p>
 
-  ${questions.length ? `<h2>Questions that had not been answered when this decision was made</h2>${questionBlocks}` : ''}
+  ${questions.length ? `<h2>Questions that were still open when this decision was made</h2>${questionBlocks}` : ''}
 
   <h2>What this release touches</h2>
   <ul>${changed
     .map(
       (ref) =>
-        `<li>${esc(ref)}${unmatched.has(ref) ? ' <span class="uncovered">— changed, but no matching requirement</span>' : ''}</li>`,
+        `<li>${esc(ref)}${unmatched.has(ref) ? ' <span class="uncovered">— changed, but no requirement covers it</span>' : ''}</li>`,
     )
     .join('')}</ul>
 
