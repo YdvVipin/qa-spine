@@ -14,6 +14,7 @@ import {
   recordAnswer,
 } from './audit.ts';
 import { assessReleaseRisk, recordVerdict } from './release.ts';
+import { renderBrief } from './brief.ts';
 
 export const VERSION = '0.1.0';
 
@@ -316,6 +317,25 @@ if (import.meta.filename === process.argv[1]) {
       } catch (err) {
         // One JSON object on stdout either way, so the caller never parses stderr.
         console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case 'brief': {
+      // Unlike `record`, errors go to stderr: this output is a document being
+      // redirected to a file, so a failed run must leave an empty file rather
+      // than a file containing an error page.
+      const id = process.argv[3];
+      if (!id) {
+        console.error('usage: qa-spine brief <verdictId>');
+        process.exitCode = 1;
+        break;
+      }
+      try {
+        const store = new TraceStore(path);
+        console.log(renderBrief(store, id));
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
       }
       break;
