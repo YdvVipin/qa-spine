@@ -2,8 +2,8 @@
 
 **Status:** design approved, not implemented
 **Date:** 2026-08-01
-**Depends on:** phase 3 (merged at `b191a31`) — `release_submit` already records everything this
-renders. Nothing new is computed.
+**Depends on:** phase 3 (merged at `b191a31`) — `release_submit` already records almost everything
+this renders.
 
 ## What this does
 
@@ -19,169 +19,260 @@ dashboard." That decision stands. But it leaves a project manager or project hea
 4. **It answers "what is in the store?"** while a project head asks "are we OK to ship, what is
    blocking, and who decided?"
 
-This adds a fourth subcommand that turns one recorded verdict into a self-contained HTML page a
-non-technical reader can understand, and that you can send them. The Inspector is untouched.
+This adds a subcommand that turns one recorded verdict into a self-contained HTML page a
+non-technical reader can understand and that you can send them, plus a prose lint at authoring
+time so the agent's own words cannot reintroduce the jargon the page strips. The Inspector is
+untouched.
 
 ## Decisions
 
 ### They receive a document; they do not operate a tool
 
-A brief sidesteps the loopback-only constraint entirely rather than arguing with it. Putting the
-Inspector on a network would mean giving up a deliberate security property, and a project head
-reading a link is a far more realistic habit than one running a localhost server.
+A brief sidesteps the loopback-only constraint rather than arguing with it. Putting the Inspector
+on a network would give up a deliberate security property, and a project head reading a link is a
+far more realistic habit than one running a localhost server.
 
 The page is self-contained — inline CSS, no JavaScript, no external requests — so it survives
 being emailed, pasted into Confluence, or printed to PDF.
 
-### It renders a verdict that already exists; it computes nothing
+### It renders a verdict that already exists; it computes no new judgement
 
 `qa-spine brief <verdictId>` reads one `verdict` artifact. `release_submit` already stored the
 decision, the agent's prose, the changed list, the unmatched refs, and the override with the ids
 of the findings it overrode.
 
-**The brief cannot disagree with the ledger, because it is the ledger.** What the reader sees is
-exactly what was recorded, not a second telling of it.
+**The brief cannot disagree with the ledger, because it is the ledger.**
 
 Rejected: computing fresh from `changed` refs via `assessReleaseRisk`. It would work before any
-decision was recorded — useful mid-sprint — but it means a second prose layer that can drift from
-what the agent actually wrote, and it produces a document that looks like a decision when none was
-made.
+decision was recorded, but it means a second prose layer that can drift from what the agent wrote,
+and it produces a document that looks like a decision when none was made.
 
-Consequence, accepted: **no verdict, no brief.** This is a release-time artifact. "No decision has
-been recorded for this release" is an honest thing for a project head to hear.
+Consequence, accepted: **no verdict, no brief.** "No decision has been recorded for this release"
+is an honest thing for a project head to hear.
 
 ### It renders the decision as recorded, not the world as it is now
 
-A verdict is a historical record. If a question cited by a `hold` has since been answered, the
-brief for that release still shows it was open when the call was made.
+If a question cited by a `hold` has since been answered, the brief for that release still shows it
+was open when the call was made. Re-evaluating at render time would make the brief disagree with
+the verdict it renders, destroying the property that justifies this approach.
 
-Re-evaluating openness at render time would make the brief disagree with the verdict it renders,
-destroying the one property that justifies this approach. A brief is a record of a decision, not a
-live status page.
+**This governs the wording throughout.** The page says "had not been answered when the release
+decision was recorded", never "still open" or "currently unanswered" — those are claims about
+now, which the brief has deliberately given up the right to make. The footer states the limitation
+outright. Anywhere two readings diverge, the past-tense one is correct.
 
-**This governs the wording throughout.** The page says "unanswered when this call was made", never
-"still unanswered" — the second is a claim about now, which the brief has deliberately given up
-the right to make. Anywhere the two readings diverge, the past-tense one is correct.
+### The prose is constrained where it is authored, not where it is rendered
+
+The translation layer fixes the structure around the agent's prose, never the language inside it.
+So the fix belongs at `release_submit`, which is where the prose is written.
+
+**Deny only unambiguous internals.** A denylist over ordinary English would reject legitimate
+sentences at the worst possible moment — a release-blocking call from someone trying to ship:
+
+| Would be wrongly rejected | Trips on |
+| --- | --- |
+| "Our finding was that the retry logic is sound." | `finding` |
+| "We could not trace the root cause before cutoff." | `trace` |
+| "The refund requirement was ambiguous from the start." | `requirement` |
+
+So the list carries only tokens with no innocent reading: snake_case relation names, camelCase
+field names, and artifact-id patterns. Bare `finding`, `trace`, `requirement` and `spine` are
+allowed.
 
 ### AI involvement is limited to the verdict's own provenance
 
-One line: who or what wrote this decision, and whether a human has reviewed it. That is free — it
-is on the artifact already.
+Who or what wrote the decision, and whether a human reviewed it. The second half needs one lookup
+— `store.edgesTo(verdictId)` filtered to `reviews`, which phase 2.5 already provides.
 
 Rejected for now: walking the chain to count how many artifacts an AI produced and how many a
-human reviewed. It is genuinely the product's differentiator — *"nine of the eleven tests here
-were AI-written and nobody reviewed them"* is a real risk signal a Jira dashboard cannot produce —
-but it costs a chain walk and a second data shape. Add it when a real reader asks.
-
-## The translation layer
-
-This is the feature. Everything else is plumbing.
-
-| What the store says | What the brief says |
-| --- | --- |
-| `verdict: "hold"` | **Not ready to ship** |
-| `verdict: "ship"` | **Cleared to ship** |
-| a cited `finding` | "A question raised when this work was specified, unanswered when this call was made" |
-| `finding.question` | the question, verbatim |
-| `finding.createdAt` | "asked 12 July" |
-| `changed` | "What this release touches" |
-| `unmatched` | "Changed with no requirement covering it" |
-| `override` | "Shipped over an open question" |
-| `override.reason` | the reason, verbatim |
-| `producer: "ai"` + `model` | "written by an AI (claude-opus-5)" |
-| `producer: "human"` | "written by a person" |
-| `promptVersion`, `sourceRef`, `inputDigest` | not shown |
-| every artifact id | not shown, except the footer |
-
-**Hard rule: no ids, no snake_case, no relation names in the page body.** The footer carries the
-verdict id and timestamp, small, so a developer can trace back — that is the single exception and
-it lives below a `<footer>` boundary the test can exclude.
+human reviewed. Genuinely the product's differentiator, but it costs a chain walk and a second
+data shape. Add it when a real reader asks.
 
 ## The page
 
-Six blocks, in reading order:
+Six blocks. Max width 640–720px so it reads in email and Confluence. Single light theme, generous
+whitespace, print styles that enlarge the decision heading and hide nothing.
 
-1. **The verdict** — large, unambiguous, in words. The first thing read.
-2. **Why** — the agent's `content.reason` prose, verbatim.
-3. **What's unanswered** — each cited finding as a question in plain language, with when it was
-   asked. Omitted entirely when there are none.
-4. **What this touches** — the `changed` list, with `unmatched` entries flagged.
-5. **Who decided** — the provenance line, plus an override callout when present.
-6. **Footer** — verdict id and timestamp.
+| # | Block | Appears |
+| --- | --- | --- |
+| 1 | The decision | always |
+| 2 | Why this decision was made | always |
+| 3 | Questions that were still open | only if cited findings exist |
+| 4 | What this release touches | always |
+| 5 | Who made this decision | always |
+| 6 | Footer | always |
 
-Single light theme, print-first. Deliberately not the Inspector's dark mono instrument look —
-different reader, different object.
+### 1 — The decision
+
+`<h1>Not ready to ship</h1>` or `<h1>Cleared to ship</h1>`, the largest thing on the page.
+
+Muted sub-line: `A formal release decision was recorded on 1 August 2026.`
+
+### 2 — Why this decision was made
+
+The agent's `content.reason`, verbatim. When it is empty or whitespace-only:
+
+> No explanation was provided with this decision.
+
+### 3 — Questions that were still open when this decision was made
+
+Per cited finding:
+
+```
+Question asked on 12 July
+"Does the login flow need to support SSO for external partners?"
+
+This question was raised while the work was being specified and had not been
+answered when the release decision was recorded.
+```
+
+The finding's `question` is the main text. Its `quote` appears in a quieter secondary style only
+when present. Light left border or subtle background so the block reads as notable rather than as
+an error. Section omitted entirely when there are no cited findings.
+
+### 4 — What this release touches
+
+Plain list of the `changed` entries. Unmatched entries carry an inline note:
+
+```
+login.spec.ts — changed, but no requirement covers it
+```
+
+### 5 — Who made this decision
+
+One accurate line:
+
+- `Written by an AI (claude-opus-5) · No human review was recorded`
+- `Written by an AI (claude-opus-5) · Later reviewed by a person`
+- `Written by a person`
+
+Override callout, only when present, on a soft amber background:
+
+```
+⚠ This release was cleared even though open questions existed.
+
+Reason given at the time:
+"We accepted the risk because the open question only affects the admin
+ reporting screen, which is not part of this release."
+```
+
+The warning mark and the words "even though" both stay. A non-technical reader needs the tension
+visible.
+
+### 6 — Footer
+
+Small and muted, below a clear visual boundary:
+
+```
+Record ID: verdict_a1b2c3d4 · Recorded 2026-08-01 09:14 UTC
+This is a historical record of a decision. It does not reflect later answers or changes.
+```
 
 ## Components
 
 ### `renderBrief(store, verdictId): string` in `src/brief.ts`
 
 1. `store.get(verdictId)`; reject if missing or not a `verdict`.
-2. Gather cited artifact ids: `store.edgesFrom(verdictId)` filtered to `derived_from`, plus any
-   ids in `content.override.findings`, deduped.
-3. `store.get()` each; keep those of type `finding`, read `question`, `quote`, `createdAt`.
-4. Render. No new store method; `edgesFrom` and `get` already exist.
+2. Cited ids: `store.edgesFrom(verdictId)` filtered to `derived_from`, plus any in
+   `content.override.findings`, deduped.
+3. `store.get()` each; keep type `finding`; read `question`, `quote`, `createdAt`.
+4. Human review: `store.edgesTo(verdictId)` — any `reviews` edge means a person looked at it.
+5. Render.
 
-Escaping is mandatory on every interpolated value. `content.reason` and `override.reason` are free
-text written by an agent, and `finding.quote` is copied from a requirement — all three can contain
-`<`, `&`, or a stray tag. A brief that renders agent prose as markup is an injection bug in a file
-people forward by email.
+No new store method. `get`, `edgesFrom` and `edgesTo` all exist.
+
+**Escaping is mandatory on every interpolated value.** `content.reason`, `override.reason` and
+`finding.quote` are all free text — the first two written by an agent, the third copied out of a
+requirement. Any of them can contain `<`, `&`, or a stray tag. A brief that renders agent prose as
+markup is an injection bug in a file people forward by email.
 
 ### `brief` subcommand in `src/server.ts`
 
-Added to the existing switch. `node dist/server.js brief <verdictId>` prints the HTML on stdout
-and exits 0; on any failure prints a plain-text message on stderr and exits 1.
+`node dist/server.js brief <verdictId>` prints the HTML on stdout and exits 0; on any failure
+prints a plain-text message on **stderr** and exits 1.
 
-Note the deliberate difference from `record`: that subcommand puts a JSON error on **stdout**
-because its caller is a program parsing one JSON object. This one's output is a document being
-redirected to a file, so an error must not land in the HTML — it goes to stderr, and a failed run
-leaves an empty file rather than a file containing an error page.
+Deliberately unlike `record`, which puts a JSON error on stdout because its caller parses one JSON
+object. This output is a document being redirected to a file, so a failed run must leave an empty
+file rather than a file containing an error page.
+
+### Prose lint in `src/release.ts`
+
+`recordVerdict` gains one validation, after the existing blank-`reason` check and before any
+write. `reason` is rejected when it contains any of:
+
+- `/\b(derived_from|supersedes|covers|verifies|contradicts|reviews)\b/i`
+- `/\b(sourceRef|promptVersion|inputDigest)\b/i`
+- `/\b(test_case|test_run)\b/i`
+- `/\b(requirement|finding|test_case|test_run|defect|verdict|review|answer)_[0-9a-f]{8}\b/i`
+
+Message names the offending term, because the consumer is a model that must correct and retry:
+
+```
+reason contains internal terminology ("derived_from") — rewrite in plain language
+suitable for a project manager
+```
+
+`covers` and `reviews` as bare words are borderline English, but both appear here only as relation
+names and the phrases a person would naturally write ("this covers the refund flow") are rare
+enough in a release rationale to accept. Named so the trade-off is visible.
 
 ## Error handling
 
 - unknown id → `no artifact with id X`, exit 1
 - id is not a verdict → `artifact X is a Y, not a verdict`, exit 1
 - no id given → usage message, exit 1
-- a cited artifact that no longer resolves → skipped silently in the unanswered list; a missing
-  citation must not stop the brief rendering, and the footer's id lets someone investigate
+- a cited artifact that no longer resolves → skipped silently; a missing citation must not stop the
+  brief rendering, and the footer's id lets someone investigate
 
 ## Testing
 
-`node --test`, new file `tests/brief.test.ts`, `new TraceStore(':memory:')` as every other test
-file does.
+`node --test`. New file `tests/brief.test.ts`, plus additions to `tests/release.test.ts` for the
+lint. `new TraceStore(':memory:')` throughout.
+
+**Brief:**
 
 1. a `hold` renders "Not ready to ship" and the agent's reason verbatim
 2. a `ship` renders "Cleared to ship"
-3. a cited finding's question appears in plain language, with its date
-4. a verdict with no cited findings omits the unanswered section entirely
-5. `unmatched` refs are rendered and flagged
-6. an override renders its reason and the callout
-7. no override renders no callout
-8. **the page body contains no artifact ids, no relation names, and no internal field names** —
-   the anti-jargon guarantee as an assertion rather than an aspiration
-9. `<`, `&` and a `<script>` tag in `content.reason` are escaped, not rendered as markup
-10. the same for `finding.quote` and `override.reason`
-11. an unknown id and a non-verdict id are both rejected, and print nothing on stdout
-12. a cited artifact that has been deleted from the chain does not prevent rendering
+3. a cited finding's question and date appear, in the past tense
+4. no cited findings → the questions section is absent entirely
+5. `unmatched` refs render with the "no requirement covers it" note
+6. an override renders the callout, the words "even though", and its reason
+7. no override → no callout
+8. **the page body contains no artifact ids, no relation names, no internal field names**
+9. an empty `reason` renders the explicit fallback sentence
+10. a verdict with a `reviews` edge renders "Later reviewed by a person"; without one, "No human
+    review was recorded"
+11. `<`, `&` and a `<script>` tag in `content.reason` are escaped, not rendered as markup
+12. the same for `finding.quote` and `override.reason`
+13. unknown id and non-verdict id are both rejected and print nothing on stdout
+14. a cited artifact missing from the store does not prevent rendering
+
+**Lint:**
+
+15. a `reason` containing `derived_from` is rejected, naming the term, and writes nothing
+16. a `reason` containing `sourceRef` is rejected
+17. a `reason` containing an artifact id is rejected
+18. **a `reason` containing bare `finding`, `trace`, `requirement` or `spine` is accepted** — the
+    false-positive guard, and the reason the narrow list was chosen
 
 ### Test 8 in detail
 
-It strips everything from `<footer` onward, then asserts the remainder matches none of:
+Strip everything from `<footer` onward, then assert the remainder matches none of:
 
 - `/\b(requirement|finding|test_case|test_run|defect|verdict|review|answer)_[0-9a-f]{8}\b/`
 - `/\b(derived_from|supersedes|covers|verifies|contradicts|reviews)\b/`
 - `/\b(promptVersion|sourceRef|inputDigest|producer|artifact)\b/`
 
-The fixture's `reason` prose deliberately contains no jargon, so anything the regexes find came
-from the template rather than from the recorded text. That distinction matters — see the ceiling
-below.
+The fixture's `reason` deliberately contains no jargon, so anything found came from the template
+rather than the recorded text.
 
 ## Scope
 
-**In:** `src/brief.ts`, the `brief` subcommand, `tests/brief.test.ts`, a README section.
+**In:** `src/brief.ts`, the `brief` subcommand in `src/server.ts`, the lint in `src/release.ts`,
+`tests/brief.test.ts`, additions to `tests/release.test.ts`, a README section.
 
 **Out:**
-- Any change to `src/inspector/` — the Inspector's audience and purpose are unchanged
+- Any change to `src/inspector/` — its audience and purpose are unchanged
 - Network exposure or auth
 - PDF generation — browsers print
 - Chain walking or AI accounting
@@ -192,14 +283,15 @@ below.
 
 To be marked with `ponytail:` comments:
 
-- **The agent's prose passes through verbatim.** The translation layer fixes the structure around
-  it, not the language inside it. An agent that writes "the finding was superseded" produces a
-  brief containing that sentence, and test 8 cannot catch it because the test cannot tell recorded
-  text from template text. Upgrade: a rubric for brief prose, or a lint pass over `reason` at
-  `release_submit` time — which is where it belongs, since that is where the prose is authored.
+- **The lint is a denylist, not a readability check.** It stops mechanical jargon leaks; it cannot
+  stop prose that is merely bad. Upgrade: a published rubric for brief prose, scored the way the
+  ambiguity rubric already scores requirements.
+- **`covers` and `reviews` are denied as bare words** though both have innocent English readings.
+  Accepted because a release rationale rarely needs them. Upgrade: require the snake_case or
+  camelCase form only.
+- **The lint is retroactive-blind.** Verdicts recorded before it existed keep whatever prose they
+  have, and their briefs will show it. There is no migration and the store is append-only, so this
+  is permanent for existing records.
 - **One verdict per brief.** No release spanning several verdicts, no comparison across releases.
-  Upgrade: accept several ids and render sections.
-- **No styling control.** One built-in theme. If a team wants their own, the honest answer is that
-  the HTML is plain and small enough to restyle by hand.
-- **Dates are rendered in the reader's implied locale from a UTC timestamp**, with no timezone
-  shown. Fine for "asked 12 July"; wrong if anyone ever needs the hour.
+- **Dates render from a UTC timestamp with no timezone shown** in the body. Fine for "asked 12
+  July"; the footer carries the full UTC stamp for anyone who needs the hour.
