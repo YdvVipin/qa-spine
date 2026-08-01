@@ -59,6 +59,9 @@ export class TraceStore {
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA foreign_keys = ON');
+    // Concurrent writers (multiple CLI `record` invocations) otherwise hit
+    // SQLITE_BUSY immediately instead of waiting for the lock to clear.
+    this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(SCHEMA);
   }
 

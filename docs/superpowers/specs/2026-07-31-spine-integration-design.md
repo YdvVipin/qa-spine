@@ -124,8 +124,14 @@ artifact beats one resolved afterwards.
 
 ### `promptVersion`
 
-`"sha256:" + sha256(template_text)[:6]`, where `template_text` is the prompt template the
+`"sha256:" + sha256(template_text)[:12]`, where `template_text` is the prompt template the
 producing agent used.
+
+**Amended 2026-07-31, during implementation.** This originally read `[:6]`. Review found that
+24 bits crosses a 50% collision probability at roughly 4,000 distinct prompt versions — two
+different prompts silently sharing a `promptVersion` is exactly the under-sensitivity this
+section calls dangerous below. Widened to 48 bits on the human partner's ruling. Note that
+qa-spine's seed data still shows a 6-char example, which is demo data rather than a contract.
 
 Hashing rather than hand-versioning is deliberate. QAAE has no prompt-versioning system and this
 does not propose building one; a content hash changes exactly when the prompt changes, which is
@@ -282,28 +288,34 @@ not read as one test's history. `heal_failure` itself calls the BDD artifact "th
 artifact"; the spec follows that. The file actually edited is recorded inside
 `content.changed_files`, where it belongs.
 
-### Not every heal is AI-produced
+### No heal path today is AI-produced
 
-Classes 1 and 2 in `heal_failure` — the locator swap and the premature-wait removal — are
-deterministic. They classify the failure by regex, verify candidates against the live page, and
-apply the fix with no model involved. Their success payloads carry no `model_used`. Only the
-`diagnose_failure` path returns one.
+**Amended 2026-07-31, during implementation review.** This section originally described a
+conditional — `ai_provenance` when `heal["model_used"]` is present, `human_provenance` otherwise
+— on the theory that some heal path set `model_used`. Review (C2) found that no path does: the
+two success paths `heal_failure` can actually take (Class 1, the verified locator swap; Class 2,
+premature-wait removal) classify the failure by regex, verify candidates against the live page,
+and apply the fix with no model involved anywhere. `model_used` is a field on `analyze_with_ai`
+only, and `attach_heal_result` never routed that function's output into a heal record. The
+conditional branch was dead code, and asserting `model_used` is "present only on the AI path"
+described a path that does not exist.
 
-So heal provenance is conditional:
+Every heal recorded today is therefore unconditionally `human`:
 
 ```python
-provenance = (spine.ai_provenance(purpose="fix", model=heal["model_used"], …)
-              if heal.get("model_used")
-              else spine.human_provenance())
+provenance = spine.human_provenance()
 ```
 
-Recording a deterministic locator swap as `producer: "ai"` would be false, and the store would
-reject it anyway for having no `model`. When `model_used` is present it is used verbatim rather
-than re-resolved — it is the model that actually ran.
+`content.strategy_used` says what actually did it (e.g. `"data-testid"`, `"wait-order"`). This
+is the one place where the not-AI-means-`human` convention grates hardest: a verified locator
+swap is neither human judgment nor a model call. It is recorded as `human` because the store's
+enum has no third option, and a false `ai` stamp is worse than an imprecise `human` one.
 
-This is the one place where the not-AI-means-`human` convention grates hardest: a verified
-locator swap is neither. It is recorded as `human`, and `content.strategy_used` says what really
-did it.
+If a genuine model-driven heal is ever wired in (e.g. routing `analyze_with_ai` into
+`attach_heal_result`), give that path `spine.ai_provenance("fix", model=...)` explicitly — do not
+resurrect a conditional keyed on a field nothing sets. A pinned test on `heal_failure`'s return
+contract (`tests/test_spine_instrumentation.py` in QAAE) fails on purpose if `model_used` ever
+appears there, so that change gets made deliberately instead of by accident.
 
 ### The `spine_disabled` guard
 
