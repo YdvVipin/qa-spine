@@ -460,6 +460,7 @@ test('recordVerdict rejects a reason containing a relation name', () => {
 test('recordVerdict rejects a reason containing an internal field name', () => {
   const store = new TraceStore(':memory:');
   const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
 
   assert.throws(
     () => recordVerdict(store, {
@@ -469,11 +470,13 @@ test('recordVerdict rejects a reason containing an internal field name', () => {
     }),
     /reason contains internal terminology \("sourceRef"\)/,
   );
+  assert.equal(store.list(undefined, 1e9).length, before);
 });
 
 test('recordVerdict rejects a reason containing an artifact id', () => {
   const store = new TraceStore(':memory:');
   const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
 
   assert.throws(
     () => recordVerdict(store, {
@@ -483,18 +486,24 @@ test('recordVerdict rejects a reason containing an artifact id', () => {
     }),
     /reason contains internal terminology \("finding_9f8e2b1c"\)/,
   );
+  assert.equal(store.list(undefined, 1e9).length, before);
 });
 
 test('recordVerdict accepts ordinary English that merely resembles jargon', () => {
   const store = new TraceStore(':memory:');
   const { open } = seedRelease(store);
 
-  // The false-positive guard, and the whole reason the denylist is narrow: each of
-  // these is a sentence a person would plausibly write under release pressure.
+  // The false-positive guard: each of these is a sentence a person would plausibly
+  // write under release pressure. The genuinely risky words (supersedes, covers, verifies,
+  // contradicts, reviews) are ordinary English verbs and are deliberately allowed.
   const verdict = recordVerdict(store, {
     releaseRef: 'release/1',
     verdict: 'hold',
     reason:
+      'The new test verifies the checkout flow works correctly. ' +
+      'The support ticket contradicts what QA found, so we\'re holding. ' +
+      'This hotfix supersedes last week\'s patch. ' +
+      'This release covers the refund flow and the team reviews every hotfix. ' +
       'Our finding was that the refund requirement was ambiguous, and we could not ' +
       'trace the root cause before the cutoff. This is the spine of the checkout flow.',
     cites: [open.id],

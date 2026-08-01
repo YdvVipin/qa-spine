@@ -118,12 +118,12 @@ export function assessReleaseRisk(
  * Upgrade: a published rubric for brief prose, scored the way rubrics/ambiguity.json
  * already scores requirements.
  *
- * ponytail: `covers` and `reviews` have innocent readings ("this covers the refund
- * flow"), but appear in this system only as relation names and are rare in a release
- * rationale. Upgrade: deny only the snake_case and camelCase forms.
+ * ponytail: covers only snake_case relations, camelCase field names, and artifact ids.
+ * Ordinary English verbs that happen to be relation names (supersedes, covers, verifies,
+ * contradicts, reviews) are deliberately allowed — they are not jargon to a project manager.
  */
 const INTERNAL_TERMS: RegExp[] = [
-  /\b(derived_from|supersedes|covers|verifies|contradicts|reviews)\b/i,
+  /\bderived_from\b/i,
   /\b(sourceRef|promptVersion|inputDigest)\b/i,
   /\b(test_case|test_run)\b/i,
   /\b(requirement|finding|test_case|test_run|defect|verdict|review|answer)_[0-9a-f]{8}\b/i,
