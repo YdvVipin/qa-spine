@@ -440,3 +440,137 @@ test('recordVerdict rejects blank override.reason and writes nothing', () => {
   );
   assert.equal(store.list(undefined, 1e9).length, before);
 });
+
+test('recordVerdict rejects a reason containing a relation name', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold',
+      reason: 'The test case was derived_from the ticket and never finished.',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /reason contains internal terminology \("derived_from"\)/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict rejects a reason containing an internal field name', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold',
+      reason: 'The sourceRef did not match anything we expected.',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /reason contains internal terminology \("sourceRef"\)/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict rejects a reason containing an artifact id', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'hold',
+      reason: 'We are holding because finding_9f8e2b1c was never answered.',
+      cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+    }),
+    /reason contains internal terminology \("finding_9f8e2b1c"\)/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict accepts ordinary English that merely resembles jargon', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  // The false-positive guard: each of these is a sentence a person would plausibly
+  // write under release pressure. The genuinely risky words (supersedes, covers, verifies,
+  // contradicts, reviews) are ordinary English verbs and are deliberately allowed.
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1',
+    verdict: 'hold',
+    reason:
+      'The new test verifies the checkout flow works correctly. ' +
+      'The support ticket contradicts what QA found, so we\'re holding. ' +
+      'This hotfix supersedes last week\'s patch. ' +
+      'This release covers the refund flow and the team reviews every hotfix. ' +
+      'Our finding was that the refund requirement was ambiguous, and we could not ' +
+      'trace the root cause before the cutoff. This is the spine of the checkout flow.',
+    cites: [open.id],
+    changed: ['PROJ-42'],
+    provenance: ai,
+  });
+  assert.equal(verdict.content.verdict, 'hold');
+});
+
+test('recordVerdict lints override.reason too, since the brief renders it verbatim', () => {
+  const store = new TraceStore(':memory:');
+  const { req, open } = seedRelease(store);
+  store.record({
+    type: 'answer',
+    content: { text: 'Retry twice, then alert on-call.' },
+    provenance: human,
+    links: [{ to: open.id, relation: 'supersedes' }, { to: req.id, relation: 'derived_from' }],
+  });
+  // M5: this was the one lint-rejection test of thirteen without the store-count-unchanged
+  // assertion — nothing stopped a mutant that let the throw happen but wrote first anyway.
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1', verdict: 'ship', reason: 'Everything is answered.',
+      cites: [req.id], changed: ['PROJ-42'],
+      override: { reason: 'accepted despite test_case coverage gaps' },
+      provenance: ai,
+    }),
+    /override\.reason contains internal terminology \("test_case"\)/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+// M1: [0-9a-f]{8} also matches eight plain digits, so a date-shaped suffix like
+// defect_20260731 used to be rejected as though it were a real artifact id — real ids come
+// from randomUUID().slice(0,8) and always contain at least one a-f letter.
+test('recordVerdict accepts a date-shaped suffix that merely resembles an artifact id', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1', verdict: 'hold',
+    reason: 'Related to defect_20260731, reported last week and still under review.',
+    cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+  });
+  assert.equal(verdict.content.verdict, 'hold');
+});
+
+// M2: source_ref and prompt_version are literal column/field names an agent sees if it reads
+// src/trace/store.ts directly — the denylist covered only the camelCase wire-format twins,
+// and plurals of the test_case/test_run terms were also uncovered.
+test('recordVerdict rejects the snake_case twins and plurals of denied terms, and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  for (const term of ['source_ref', 'prompt_version', 'test_cases', 'test_runs']) {
+    assert.throws(
+      () => recordVerdict(store, {
+        releaseRef: 'release/1', verdict: 'hold',
+        reason: `We are holding because the ${term} did not line up with what we expected.`,
+        cites: [open.id], changed: ['PROJ-42'], provenance: ai,
+      }),
+      new RegExp(`reason contains internal terminology \\("${term}"\\)`),
+      `expected "${term}" to be rejected`,
+    );
+  }
+  assert.equal(store.list(undefined, 1e9).length, before);
+});

@@ -109,6 +109,52 @@ export function assessReleaseRisk(
 }
 
 /**
+ * Tokens with no innocent English reading. Deliberately narrow: a denylist over
+ * ordinary words would reject "our finding was that…" or "could not trace the root
+ * cause" on a release-blocking call, which is the worst possible moment to argue
+ * about wording.
+ *
+ * ponytail: a denylist stops mechanical jargon leaks, not prose that is merely bad.
+ * Upgrade: a published rubric for brief prose, scored the way rubrics/ambiguity.json
+ * already scores requirements.
+ *
+ * ponytail: covers only snake_case relations, camelCase field names, and artifact ids.
+ * Ordinary English verbs that happen to be relation names (supersedes, covers, verifies,
+ * contradicts, reviews) are deliberately allowed — they are not jargon to a project manager.
+ */
+const INTERNAL_TERMS: RegExp[] = [
+  /\bderived_from\b/i,
+  // M2: source_ref and prompt_version are the literal column/field names an agent sees if
+  // it reads the schema directly, not just their camelCase wire-format twins.
+  /\b(sourceRef|source_ref|promptVersion|prompt_version|inputDigest)\b/i,
+  /\b(test_cases?|test_runs?)\b/i,
+  // M1: `[0-9a-f]{8}` also matches eight plain digits, so a date-shaped suffix like
+  // defect_20260731 was rejected even though real ids (randomUUID().slice(0,8)) always
+  // contain at least one a-f letter — hex has 16 symbols, an all-digit run is one in 6500.
+  /\b(requirement|finding|test_case|test_run|defect|verdict|review|answer)_(?!\d{8}\b)[0-9a-f]{8}\b/i,
+];
+
+/**
+ * The brief renders this text verbatim to a non-technical reader, so the constraint
+ * belongs here, where the prose is authored, rather than at render time where the
+ * only options are to mangle it or to show it.
+ *
+ * I3: also exported and reused by `submitFindings` in audit.ts to lint `question`, the other
+ * field the brief renders verbatim from AI prose.
+ */
+export function assertPlainLanguage(field: string, text: string): void {
+  for (const pattern of INTERNAL_TERMS) {
+    const hit = text.match(pattern);
+    if (hit) {
+      throw new Error(
+        `${field} contains internal terminology (${JSON.stringify(hit[0])}) — ` +
+          'rewrite in plain language suitable for a project manager',
+      );
+    }
+  }
+}
+
+/**
  * Records a release verdict, refusing a `ship` while any signal is live.
  *
  * The signals are recomputed here from `changed` and are never taken from the caller. An
@@ -143,6 +189,7 @@ export function recordVerdict(
 
   const reason = input.reason.trim();
   if (!reason) throw new Error('reason must not be blank');
+  assertPlainLanguage('reason', reason);
 
   if (input.verdict !== 'ship' && input.verdict !== 'hold') {
     throw new Error(`verdict must be 'ship' or 'hold', got ${JSON.stringify(input.verdict)}`);
@@ -158,6 +205,7 @@ export function recordVerdict(
   if (input.override) {
     overrideReason = input.override.reason?.trim() ?? '';
     if (!overrideReason) throw new Error('override.reason must not be blank');
+    assertPlainLanguage('override.reason', overrideReason);
   }
   if (overrideReason && input.verdict === 'hold') {
     throw new Error('override is only meaningful with a ship verdict');
@@ -191,11 +239,21 @@ export function recordVerdict(
     content: {
       verdict: input.verdict,
       reason,
-      // M1: reuse the normalization assessReleaseRisk already did, rather than re-deriving
+      // reuse the normalization assessReleaseRisk already did, rather than re-deriving
       // an identical `changed` list here — a duplicate that could silently drift.
       changed: release.changed,
       unmatched: matched.unmatched,
       override,
+      // C1: the findings actually open at decision time, on every verdict — not just when
+      // there is an override. `cites` (below, the derived_from edges) means "artifacts this
+      // brief refers to", which release_submit's own instructions tell the agent to use for
+      // every claim, including a finding cited to say it was resolved. Section 3 of the
+      // brief must not be built from `cites`, or a resolved finding renders as an open
+      // question, and a hold that cites a failing test run instead of any finding renders no
+      // questions section even though one was live. `signals` is the one place that already
+      // means "open right now" — see brief.ts for the read side and its fallback for
+      // verdicts recorded before this field existed.
+      liveFindings: signals.map((s) => s.detail.findingId),
     },
     provenance: input.provenance,
     links: cites.map((to) => ({ to, relation: 'derived_from' as const })),

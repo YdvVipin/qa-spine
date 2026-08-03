@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { TraceStore } from './trace/store.ts';
 import type { Artifact, Provenance } from './trace/schema.ts';
+import { assertPlainLanguage } from './release.ts';
 
 /**
  * A rubric is published, versioned data — the thing a team argues about in review.
@@ -136,6 +137,15 @@ export function submitFindings(
     if (!requirement.text.includes(f.quote)) {
       throw new Error(`quote not found in requirement text: "${f.quote}"`);
     }
+    // I3: `question` is the other field the brief renders verbatim from AI prose (release.ts
+    // only ever lints `reason` and `override.reason`), and audit_submit constrained it with
+    // only z.string().min(1) — so a question naming an artifact id or a snake_case relation
+    // sailed straight onto the page. Fix at the authoring end, per the same principle
+    // release.ts already uses: the constraint belongs where the prose is written, not at
+    // render time where the only options are to mangle it or show it. `quote` is
+    // deliberately left unlinted — it's a verbatim substring of the requirement, checked
+    // just above, and linting it would make legitimate requirements unrecordable.
+    assertPlainLanguage('question', f.question);
   }
 
   return findings.map((f) =>

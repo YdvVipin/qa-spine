@@ -235,3 +235,38 @@ test('audit_submit strips unknown keys like suggestedRewrite from recorded findi
   assert.ok(written[0].content.category === 'AMB-VAGUE-QUANT', 'valid fields are preserved');
   assert.ok(written[0].content.quote === 'load quickly', 'quote is preserved');
 });
+
+// I3: the brief renders `question` verbatim, the same as `reason` in release.ts, so it
+// gets the same plain-language lint at the point it's authored.
+test('audit_submit rejects a question containing an artifact id and writes nothing', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  const before = countArtifacts(store);
+
+  assert.throws(
+    () =>
+      submitFindings(store, {
+        requirementId: req.id,
+        findings: [
+          vagueFinding({
+            question: 'Does this requirement_a1b2c3d4 need a test_case for the SSO path, and is its sourceRef correct?',
+          }),
+        ],
+        provenance: ai,
+      }),
+    /question contains internal terminology/,
+  );
+  assert.equal(countArtifacts(store), before, 'store untouched');
+});
+
+test('audit_submit accepts an ordinary plain-language question', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+
+  const written = submitFindings(store, {
+    requirementId: req.id,
+    findings: [vagueFinding({ question: 'What p95 load time counts as "quickly", and on what connection?' })],
+    provenance: ai,
+  });
+  assert.equal(written.length, 1);
+});

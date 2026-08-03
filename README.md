@@ -182,6 +182,38 @@ JIRA_SITE=yourteam.atlassian.net JIRA_EMAIL=you@example.com JIRA_TOKEN=... \
 That script is a loader in `examples/`, not a feature. Nothing in `src/` knows what Jira is,
 and the server still makes no network call of its own.
 
+## The release brief
+
+The Inspector is an instrument for judging agent output; it assumes you know what an
+artifact and a relation are, and it is loopback-only, so a project manager cannot open
+it at all. The brief is the other half: one command turns a recorded verdict into a
+self-contained HTML page you can send them.
+
+```bash
+node dist/server.js brief verdict_a1b2c3d4 > release-brief.html
+```
+
+Inline CSS, no JavaScript, no external requests — it survives email, Confluence and
+printing. It answers the questions a project head actually has: are we ready to ship,
+what was unanswered, what does this touch, and who decided.
+
+It renders a verdict that already exists and computes nothing, so **the brief cannot
+disagree with the ledger, because it is the ledger.** It also renders the decision *as
+recorded*: if a question cited by a hold has since been answered, the brief for that
+release still shows it was open when the call was made, and the footer says so. A brief
+is a record of a decision, not a live status page.
+
+No artifact ids, relation names or internal field names appear in the body — the footer
+carries the record id for anyone tracing back, and a test asserts the rest of the page
+stays clean.
+
+The page can only be as plain as the prose inside it, so `release_submit` rejects a
+`reason` or an `override.reason` containing internal terminology — relation names, field
+names, artifact ids — and asks for a rewrite. The list is deliberately narrow: ordinary
+English that merely resembles jargon ("our finding was that…", "could not trace the root
+cause") is accepted, because rejecting a legitimate sentence on a release-blocking call
+is worse than letting one awkward word through.
+
 ## Roadmap
 
 - **Phase 1 — trace spine.** Done.
