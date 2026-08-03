@@ -351,6 +351,56 @@ test('N2: a finding live on two changed requirements renders only once', () => {
   assert.equal(occurrences.length, 1);
 });
 
+// --- Final wave: a legacy/directly-written verdict must not render an empty-looking
+// section. Neither of these is a regression — the brief is honestly rendering an
+// incomplete record — but an empty box or a heading with nothing under it reads as a
+// rendering bug to the one reader who cannot tell the difference. --------------------
+
+test('a cited finding with no question text renders no questions section at all', () => {
+  const store = new TraceStore(':memory:');
+  const req = store.record({
+    type: 'requirement', sourceRef: 'PROJ-1',
+    content: { text: 'Refunds must be processed quickly.' }, provenance: human,
+  });
+  // Same shape examples/seed-demo.ts writes directly via store.record: `why` and
+  // `suggestedRewrite`, never `question`.
+  const finding = store.record({
+    type: 'finding', sourceRef: 'PROJ-1',
+    content: {
+      category: 'AMB-VAGUE-QUANT', quote: 'quickly',
+      why: 'No time bound is given, so no test can decide pass or fail.',
+      suggestedRewrite: 'within 3 business days', confidence: 'high',
+    },
+    provenance: ai,
+    links: [{ to: req.id, relation: 'derived_from' }],
+  });
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1', verdict: 'hold', reason: 'Holding pending clarification.',
+    cites: [finding.id], changed: ['PROJ-1'], provenance: ai,
+  });
+
+  const html = renderBrief(store, verdict.id);
+  assert.doesNotMatch(html, /<h2>Questions/);
+  assert.doesNotMatch(html, /class="q"/);
+});
+
+test('an empty changed list renders no "What this release touches" section at all', () => {
+  const store = new TraceStore(':memory:');
+  // Written directly, the way a legacy verdict predating the `changed` field would be —
+  // recordVerdict always requires a non-empty `changed`, so this bypasses it on purpose.
+  const verdict = store.record({
+    type: 'verdict',
+    sourceRef: 'release/legacy',
+    content: { verdict: 'hold', reason: 'Holding pending clarification.' },
+    provenance: ai,
+  });
+
+  const html = renderBrief(store, verdict.id);
+  assert.doesNotMatch(html, /What this release touches/);
+  assert.doesNotMatch(html, /<ul>/);
+});
+
 // --- I1: the release id is visible, not just in <title> --------------------------------
 
 test('I1: the sub-line names the release so a printed page is not anonymous', () => {

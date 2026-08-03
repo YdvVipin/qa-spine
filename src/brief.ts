@@ -109,9 +109,15 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
     : [...new Set(liveFindings)];
   // A citation that no longer resolves is skipped rather than fatal — the footer's id
   // is enough for someone to investigate, and a missing link must not withhold the brief.
+  // A finding with no question text (e.g. examples/seed-demo.ts writes `why` and
+  // `suggestedRewrite`, never `question`) has nothing to tell this reader — skip it
+  // entirely rather than render a box with a date and a note explaining nothing. Filtering
+  // here, not just in questionBlocks below, means the questions.length check further down
+  // already omits the section heading too when every candidate lacks question text.
   const questions = findingIds
     .map((id) => store.get(id))
-    .filter((a): a is Artifact => !!a && a.type === 'finding');
+    .filter((a): a is Artifact => !!a && a.type === 'finding')
+    .filter((f) => String(f.content.question ?? '').trim());
 
   // M4: computed for every verdict, and now shown on both branches below — a human-written
   // verdict used to never say whether anyone reviewed it.
@@ -163,13 +169,20 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
       : ''
   }
 
-  <h2>What this release touches</h2>
+  ${
+    changed.length
+      ? // A heading with an empty list under it (e.g. a verdict recorded before `changed`
+        // existed, like this store's own legacy verdict_cb0d0a62) reads as a rendering
+        // failure, not as "nothing to show" — omit the whole section, heading included.
+        `<h2>What this release touches</h2>
   <ul>${changed
     .map(
       (ref) =>
         `<li>${esc(ref)}${unmatched.has(ref) ? ' <span class="uncovered">— changed, but no requirement covers it</span>' : ''}</li>`,
     )
-    .join('')}</ul>
+    .join('')}</ul>`
+      : ''
+  }
 
   <h2>Who made this decision</h2>
   <p class="who">${who}</p>
