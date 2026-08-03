@@ -21,9 +21,17 @@ const esc = (value: unknown): string =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 
-/** "1 August 2026" — a date a project head reads without decoding. */
-const longDate = (iso: string): string =>
-  new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+/**
+ * "1 August 2026" — a date a project head reads without decoding.
+ *
+ * I2: `timeZone: 'UTC'` is load-bearing. Without it this formats in whatever zone the
+ * rendering machine happens to be in, while `utcStamp` below is fixed UTC — so a verdict
+ * recorded at 2026-08-01T00:30Z could show "31 July 2026" in the body and
+ * "2026-08-01 00:30 UTC" in the footer, one calendar day apart, on the same page.
+ * Exported so the fix can be pinned by a test independent of the host's actual timezone.
+ */
+export const longDate = (iso: string): string =>
+  new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 /** "2026-08-01 09:14 UTC" — the footer's precise stamp, for someone tracing back. */
 const utcStamp = (iso: string): string =>
@@ -73,33 +81,54 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const unmatched = new Set<string>(Array.isArray(c.unmatched) ? c.unmatched : []);
   const override = c.override && typeof c.override === 'object' ? c.override : null;
 
-  // Cited findings: the derived_from edges plus anything the override names.
-  const citedIds = new Set<string>([
-    ...store.edgesFrom(verdict.id).filter((e) => e.relation === 'derived_from').map((e) => e.toArtifactId),
-    ...(Array.isArray(override?.findings) ? override.findings : []),
-  ]);
+  // C1: section 3 is built from `content.liveFindings` alone — the findings that were
+  // actually open (unresolved) when the verdict was recorded — never from `cites` (the
+  // derived_from edges below). `cites` means "artifacts this brief refers to", and
+  // release_submit's own instructions tell the agent to cite an artifact for every claim,
+  // including a finding cited to say it was resolved — so a cites-based section 3 could
+  // render an already-answered finding as an open question, and, the other way round,
+  // render no section at all for a hold that cites a failing test run instead of any
+  // finding. `liveFindings` is recomputed signals and is immune to both.
+  const liveFindings: string[] | undefined = Array.isArray(c.liveFindings) ? c.liveFindings : undefined;
+
+  // ponytail: verdicts recorded before `liveFindings` existed (this branch) have no way to
+  // acquire it — the store is append-only, so there is no backfill. Fall back to the old
+  // cites-based reconstruction, but soften the claim: these findings were *cited* in the
+  // decision, not provably *unanswered* by it — that is the ceiling of what an old verdict
+  // can honestly say. Upgrade path: none without a migration story for this project (see
+  // the matching note in release.ts, recordVerdict).
+  const usingFallback = liveFindings === undefined;
+  const findingIds = usingFallback
+    ? [...new Set<string>([
+        ...store.edgesFrom(verdict.id).filter((e) => e.relation === 'derived_from').map((e) => e.toArtifactId),
+        ...(Array.isArray(override?.findings) ? override.findings : []),
+      ])]
+    : liveFindings;
   // A citation that no longer resolves is skipped rather than fatal — the footer's id
   // is enough for someone to investigate, and a missing link must not withhold the brief.
-  const questions = [...citedIds]
+  const questions = findingIds
     .map((id) => store.get(id))
     .filter((a): a is Artifact => !!a && a.type === 'finding');
 
+  // M4: computed for every verdict, and now shown on both branches below — a human-written
+  // verdict used to never say whether anyone reviewed it.
   const reviewed = store.edgesTo(verdict.id).some((e) => e.relation === 'reviews');
+  const reviewNote = reviewed ? 'Later reviewed by a person' : 'No human review was recorded';
   const p = verdict.provenance;
-  const who =
-    p.producer === 'ai'
-      ? `Written by an AI (${esc(p.model)}) · ${reviewed ? 'Later reviewed by a person' : 'No human review was recorded'}`
-      : 'Written by a person';
+  const who = p.producer === 'ai' ? `Written by an AI (${esc(p.model)}) · ${reviewNote}` : `Written by a person · ${reviewNote}`;
 
   const questionBlocks = questions
     .map((f) => {
       const quote = String(f.content.quote ?? '').trim();
+      const note = usingFallback
+        ? 'This question was cited in the release decision. Whether it was still open at the time was not recorded.'
+        : 'This question was raised while the work was being specified and had not been answered when the release decision was recorded.';
       return `
       <div class="q">
         <div class="q-when">Question asked on ${esc(longDate(f.createdAt))}</div>
         <div class="q-ask">${esc(f.content.question ?? '')}</div>
         ${quote ? `<p class="q-quote">About the wording: "${esc(quote)}"</p>` : ''}
-        <p class="q-note">This question was raised while the work was being specified and had not been answered when the release decision was recorded.</p>
+        <p class="q-note">${note}</p>
       </div>`;
     })
     .join('');
@@ -115,7 +144,7 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
 <body>
 <main>
   <h1>${shipped ? 'Cleared to ship' : 'Not ready to ship'}</h1>
-  <p class="sub">A formal release decision was recorded on ${esc(longDate(verdict.createdAt))}.</p>
+  <p class="sub">Release ${esc(verdict.sourceRef ?? 'unrecorded')} · decision recorded on ${esc(longDate(verdict.createdAt))}.</p>
 
   <h2>Why this decision was made</h2>
   <p>${reason ? esc(reason) : 'No explanation was provided with this decision.'}</p>
