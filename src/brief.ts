@@ -98,12 +98,15 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   // can honestly say. Upgrade path: none without a migration story for this project (see
   // the matching note in release.ts, recordVerdict).
   const usingFallback = liveFindings === undefined;
+  // N2: `liveFindings` comes straight from `signals`, a flatMap over every changed
+  // requirement — a finding derived_from two changed requirements appears in it twice,
+  // which without dedup rendered the same question block twice.
   const findingIds = usingFallback
     ? [...new Set<string>([
         ...store.edgesFrom(verdict.id).filter((e) => e.relation === 'derived_from').map((e) => e.toArtifactId),
         ...(Array.isArray(override?.findings) ? override.findings : []),
       ])]
-    : liveFindings;
+    : [...new Set(liveFindings)];
   // A citation that no longer resolves is skipped rather than fatal — the footer's id
   // is enough for someone to investigate, and a missing link must not withhold the brief.
   const questions = findingIds
@@ -149,7 +152,16 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   <h2>Why this decision was made</h2>
   <p>${reason ? esc(reason) : 'No explanation was provided with this decision.'}</p>
 
-  ${questions.length ? `<h2>Questions that were still open when this decision was made</h2>${questionBlocks}` : ''}
+  ${
+    questions.length
+      ? // N1: the heading is the strongest claim on the page — on the fallback branch,
+        // "still open when this decision was made" is exactly the fact C1 established the
+        // ledger never recorded for a pre-liveFindings verdict, so it must not claim more
+        // than the softened note below it does. The approved wording stays exactly as-is
+        // on the liveFindings-present branch, where it's true.
+        `<h2>${usingFallback ? 'Questions cited in this decision' : 'Questions that were still open when this decision was made'}</h2>${questionBlocks}`
+      : ''
+  }
 
   <h2>What this release touches</h2>
   <ul>${changed

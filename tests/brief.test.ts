@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { TraceStore } from '../src/trace/store.ts';
 import { renderBrief, longDate } from '../src/brief.ts';
 import { recordVerdict } from '../src/release.ts';
@@ -308,6 +309,46 @@ test('C1: liveFindings absent (pre-migration verdict) falls back to cites with s
   assert.match(html, /Does the login flow need to support SSO for external partners\?/);
   assert.doesNotMatch(html, /had not been answered when the release decision was recorded/);
   assert.match(html, /This question was cited in the release decision\./);
+  // N1: the heading is the strongest claim on the page. It must not assert "still open
+  // when this decision was made" — exactly the fact this branch cannot establish — even
+  // though the softened note underneath it got that right.
+  assert.match(html, /<h2>Questions cited in this decision<\/h2>/);
+  assert.doesNotMatch(html, /Questions that were still open when this decision was made/);
+});
+
+test('N1: the approved heading is untouched on the liveFindings-present branch', () => {
+  const store = new TraceStore(':memory:');
+  const { verdict } = seedBrief(store);
+  assert.match(renderBrief(store, verdict.id), /<h2>Questions that were still open when this decision was made<\/h2>/);
+});
+
+test('N2: a finding live on two changed requirements renders only once', () => {
+  const store = new TraceStore(':memory:');
+  const reqA = store.record({
+    type: 'requirement', sourceRef: 'PROJ-1',
+    content: { text: 'Refunds must be processed quickly.' }, provenance: human,
+  });
+  const reqB = store.record({
+    type: 'requirement', sourceRef: 'PROJ-2',
+    content: { text: 'Refunds must be processed quickly.' }, provenance: human,
+  });
+  // One finding, derived_from both requirements — assessReleaseRisk's flatMap over changed
+  // requirements would surface it twice in `signals` before the dedup.
+  const finding = store.record({
+    type: 'finding', sourceRef: 'PROJ-1',
+    content: { category: 'AMB-VAGUE-QUANT', quote: 'quickly', question: 'How quick counts as quick?', confidence: 'high' },
+    provenance: ai,
+    links: [{ to: reqA.id, relation: 'derived_from' }, { to: reqB.id, relation: 'derived_from' }],
+  });
+
+  const verdict = recordVerdict(store, {
+    releaseRef: 'release/1', verdict: 'hold', reason: 'Holding pending an answer.',
+    cites: [finding.id], changed: ['PROJ-1', 'PROJ-2'], provenance: ai,
+  });
+
+  const html = renderBrief(store, verdict.id);
+  const occurrences = html.match(/How quick counts as quick\?/g) ?? [];
+  assert.equal(occurrences.length, 1);
 });
 
 // --- I1: the release id is visible, not just in <title> --------------------------------
@@ -323,9 +364,20 @@ test('I1: the sub-line names the release so a printed page is not anonymous', ()
 // --- I2: longDate must not drift a calendar day from the UTC footer stamp --------------
 
 test('I2: longDate formats in UTC regardless of the host timezone', () => {
-  // 2026-08-01T00:30:00Z is still 31 July in any timezone west of UTC (e.g.
-  // America/Los_Angeles). Pinning timeZone: 'UTC' is what keeps this fixed no matter
-  // where the brief is rendered — the assertion below holds on every machine.
+  // 2026-08-01T00:30:00Z renders on the same calendar day whether or not the fix is in
+  // place under UTC, Europe/Berlin, or Asia/Kolkata (all at or east of UTC) — so asserting
+  // in-process is only a real regression guard on a host west of UTC. TZ can't be forced
+  // reliably for an already-running process (Node/ICU can cache the offset), so this
+  // forces it on a child process instead, the same way tests/brief-cli.test.ts forces
+  // QA_SPINE_DB for the CLI.
+  const out = execFileSync(
+    'node',
+    ['-e', "import('./src/brief.ts').then(({ longDate }) => console.log(longDate('2026-08-01T00:30:00Z')))"],
+    { encoding: 'utf8', env: { ...process.env, TZ: 'America/Los_Angeles' } },
+  ).trim();
+  assert.equal(out, '1 August 2026', 'must read 1 August even from a timezone west of UTC');
+
+  // Sanity: the pure function still behaves in-process too.
   assert.equal(longDate('2026-08-01T00:30:00Z'), '1 August 2026');
 });
 
