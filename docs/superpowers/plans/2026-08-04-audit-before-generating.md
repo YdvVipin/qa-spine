@@ -855,8 +855,8 @@ git commit -m "feat(trace): add audit_requirement and audit_submit to the spine 
 Append to `tests/test_spine_instrumentation.py`:
 
 ```python
-def test_start_from_ticket_audits_a_new_requirement(monkeypatch):
-    """The questions reach the caller and the count reaches the job."""
+def test_audit_helper_records_findings_and_returns_them(monkeypatch):
+    """The helper itself: fetch the rubric, reason, submit, hand back the questions."""
     calls = {}
     monkeypatch.setattr(loop_a.spine, "audit_requirement", lambda rid: {
         "requirement": {"id": rid, "text": "Refunds must be processed quickly."},
@@ -913,6 +913,68 @@ def test_audit_never_raises(monkeypatch):
 
     monkeypatch.setattr(loop_a.spine, "audit_requirement", boom)
     assert loop_a._audit_requirement({"id": "job_1"}, "requirement_1a") == []
+
+
+# ── the wiring itself, through the real start_from_ticket ─────────────────────
+# `_isolate_start_from_ticket` and `_FakeJira` already exist in this file — reuse
+# them rather than building a second harness.
+
+def test_start_from_ticket_surfaces_the_questions_and_the_count(monkeypatch, _isolate_start_from_ticket):
+    """The caller is told immediately, and the count outlives the terminal."""
+    spy = _Spy(ids=["requirement_new"])
+    _patch_spine(monkeypatch, spy)
+    monkeypatch.setattr(loop_a.spine, "audit_requirement", lambda rid: {
+        "requirement": {"id": rid, "text": "As a user I can log in with valid credentials."},
+        "rubric": {"version": "ambiguity/1", "rules": [{"id": "AMB-MISSING-ACTOR"}]},
+        "instructions": "…",
+    })
+    monkeypatch.setattr(loop_a.auditor, "audit", lambda text, rubric, instructions: [
+        {"category": "AMB-MISSING-ACTOR", "quote": "valid credentials",
+         "question": "Which roles count as a user here?", "confidence": "medium"},
+    ])
+    monkeypatch.setattr(loop_a.spine, "audit_submit", lambda rid, findings, prov: ["finding_a"])
+
+    result = loop_a.start_from_ticket("scrum-42", jira_client=_FakeJira(), resume=False)
+
+    assert result["success"] is True
+    assert len(result["open_questions"]) == 1
+    assert result["open_questions"][0]["question"] == "Which roles count as a user here?"
+    assert "audit_answer" in result["next_step"]
+    assert result["job"]["spine_open_questions"] == 1
+    assert result["plan"], "the plan must still be generated — the audit is advisory"
+
+
+def test_start_from_ticket_does_not_audit_when_nothing_was_recorded(monkeypatch, _isolate_start_from_ticket):
+    """No requirement id means no requirement to audit — and no wasted model call."""
+    monkeypatch.setattr(loop_a.spine, "record", lambda *a, **kw: None)
+    monkeypatch.setattr(loop_a.spine, "enabled", lambda: True)
+    called = []
+    monkeypatch.setattr(loop_a.spine, "audit_requirement", lambda rid: called.append(rid))
+
+    result = loop_a.start_from_ticket("scrum-43", jira_client=_FakeJira(), resume=False)
+
+    assert result["success"] is True
+    assert called == []
+    assert result["open_questions"] == []
+    assert result["job"]["spine_open_questions"] == 0
+
+
+def test_start_from_ticket_still_returns_a_plan_when_the_audit_explodes(monkeypatch, _isolate_start_from_ticket):
+    """The audit is advisory: a failure there must cost nothing already earned."""
+    spy = _Spy(ids=["requirement_new"])
+    _patch_spine(monkeypatch, spy)
+
+    def boom(*a, **k):
+        raise RuntimeError("the auditor is on fire")
+
+    monkeypatch.setattr(loop_a.spine, "audit_requirement", boom)
+
+    result = loop_a.start_from_ticket("scrum-44", jira_client=_FakeJira(), resume=False)
+
+    assert result["success"] is True
+    assert result["plan"]
+    assert result["open_questions"] == []
+    assert result["job"]["spine_requirement_id"] == "requirement_new"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1026,7 +1088,8 @@ Then add the questions to the returned dict, beside the existing keys:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `.venv/bin/python -m pytest tests/test_spine_instrumentation.py -q`
-Expected: PASS — the existing instrumentation tests plus the 5 new ones.
+Expected: PASS — the existing instrumentation tests plus the 8 new ones (5 covering the helper,
+3 driving the real `start_from_ticket`).
 
 - [ ] **Step 6: Confirm nothing else broke**
 
