@@ -118,6 +118,19 @@ every answered question, and an AI-authored answer is drawn in the chain view in
 used for AI artifacts. If you need approval before an AI answer counts as resolving a
 finding, the `approvedBy` field on every artifact's provenance is the place to build it.
 
+The audit is also reachable from the command line, so a non-JavaScript caller can run it:
+
+```bash
+node dist/server.js audit-requirement requirement_9f8e            # → requirement + rubric + instructions
+echo '{"requirementId":"…","findings":[…],"provenance":{…}}' \
+  | node dist/server.js audit-submit                              # → {"recorded":[ids]}
+```
+
+Findings must arrive through `audit-submit` rather than `trace_record`. It rejects a finding
+citing an unknown rule id and a quote that is not verbatim in the requirement, all-or-nothing —
+that check is what stops a hallucinated quote entering the store, and writing findings any other
+way bypasses it.
+
 ## Release risk
 
 `assess_release_risk` takes the list of sourceRefs a release touches — JIRA keys, file paths —

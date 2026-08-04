@@ -340,6 +340,55 @@ if (import.meta.filename === process.argv[1]) {
       }
       break;
     }
+
+    case 'audit-requirement': {
+      // Errors go to stdout as JSON, like `record` and unlike `brief`: the caller
+      // here is a program parsing one JSON object, not a document being redirected.
+      const id = process.argv[3];
+      if (!id) {
+        console.log(JSON.stringify({ error: 'usage: qa-spine audit-requirement <requirementId>' }));
+        process.exitCode = 1;
+        break;
+      }
+      try {
+        const store = new TraceStore(path);
+        console.log(JSON.stringify(auditRequirement(store, id)));
+      } catch (err) {
+        console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        process.exitCode = 1;
+      }
+      break;
+    }
+
+    case 'audit-submit': {
+      if (process.stdin.isTTY) {
+        console.log(JSON.stringify({ error: 'audit-submit reads a JSON payload on stdin; pipe one in' }));
+        process.exitCode = 1;
+        break;
+      }
+      // ponytail: a caller that holds stdin open without closing it still hangs.
+      // Upgrade path is a read timeout.
+      try {
+        const store = new TraceStore(path);
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+        const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        // ProvenanceInput, not Provenance: submitFindings stamps promptVersion from the
+        // rubric version, so the refinement would reject a correct payload here.
+        const provenance = ProvenanceInput.parse(input.provenance);
+        const recorded = submitFindings(store, {
+          requirementId: input.requirementId,
+          findings: input.findings,
+          provenance,
+        });
+        console.log(JSON.stringify({ recorded: recorded.map((a) => a.id) }));
+      } catch (err) {
+        console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        process.exitCode = 1;
+      }
+      break;
+    }
+
     default: {
       const store = new TraceStore(path);
       await createServer(store).connect(new StdioServerTransport());
