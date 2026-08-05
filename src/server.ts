@@ -114,9 +114,10 @@ export function createServer(store: TraceStore) {
     {
       description:
         'Record ambiguity findings against a requirement. Every finding must cite a rule id from ' +
-        'the rubric and quote the requirement verbatim; if any finding fails either check the ' +
-        'whole submission is rejected and nothing is written. `promptVersion` is set by the ' +
-        'server from the rubric version, not by the caller.',
+        'the rubric, quote the requirement verbatim, and phrase `question` in plain language with ' +
+        'no internal identifiers or system terminology; if any finding fails any check the whole ' +
+        'submission is rejected and nothing is written. `promptVersion` is set by the server from ' +
+        'the rubric version, not by the caller.',
       inputSchema: {
         requirementId: z.string(),
         findings: z.array(AuditFinding).min(1),

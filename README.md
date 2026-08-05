@@ -109,8 +109,10 @@ Point `QA_SPINE_RUBRICS` at your own directory to publish rubrics for your team.
 
 The server never calls a model. `audit_requirement` hands the requirement and the rubric
 to the calling agent; `audit_submit` takes what comes back and refuses anything that
-cites an unknown rule or quotes text that is not in the requirement. A hallucinated quote
-cannot enter the store.
+cites an unknown rule, quotes text that is not in the requirement, or phrases `question`
+in internal terminology rather than plain language (the same jargon lint `release_submit`
+runs on `reason`, see [Release risk](#release-risk)). A hallucinated quote cannot enter
+the store.
 
 An agent can answer its own audit questions through `audit_answer`, and nothing prevents it.
 Provenance is the safeguard rather than a lock: the queue shows the producer and model of
@@ -127,8 +129,9 @@ echo '{"requirementId":"…","findings":[…],"provenance":{…}}' \
 ```
 
 Findings must arrive through `audit-submit` rather than `trace_record`. It rejects a finding
-citing an unknown rule id and a quote that is not verbatim in the requirement, all-or-nothing —
-that check is what stops a hallucinated quote entering the store, and writing findings any other
+citing an unknown rule id, a quote that is not verbatim in the requirement, or a `question`
+written in internal terminology instead of plain language — all-or-nothing — that check is
+what stops a hallucinated quote entering the store, and writing findings any other
 way bypasses it.
 
 ## Release risk

@@ -134,6 +134,34 @@ test('audit-submit accepts provenance with no promptVersion and stamps the rubri
   });
 });
 
+test('audit-submit overwrites a caller-supplied promptVersion with the rubric version', () => {
+  withDb((db, seed) => {
+    const id = seed();
+    const payload = JSON.stringify({
+      requirementId: id,
+      findings: [{
+        category: 'AMB-VAGUE-QUANT',
+        quote: 'processed quickly',
+        question: 'How quick?',
+        confidence: 'high',
+      }],
+      // This is the production path: loop_a always sends a promptVersion (the
+      // auditor's module digest) via ai_provenance. The server must overwrite it
+      // with the rubric version, not refuse the submission for supplying one.
+      provenance: { producer: 'ai', model: 'claude-haiku-4-5', promptVersion: 'sha256:deadbeefcafe' },
+    });
+    const { code, out } = run(['audit-submit'], db, payload);
+    assert.equal(code, 0);
+
+    const store = new TraceStore(db);
+    const finding = store.get(out.recorded[0]);
+    store.close();
+    assert.ok(finding, 'finding must exist');
+    assert.notEqual(finding.provenance.promptVersion, 'sha256:deadbeefcafe');
+    assert.match(String(finding.provenance.promptVersion), /^ambiguity\//);
+  });
+});
+
 test('audit-submit rejects an unknown rule id and writes nothing', () => {
   withDb((db, seed) => {
     const id = seed();

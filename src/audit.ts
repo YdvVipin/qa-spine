@@ -57,7 +57,9 @@ const INSTRUCTIONS =
   '`category` must be a rule id from this rubric. `quote` must be copied verbatim from the ' +
   'requirement text — it is checked on submit, and a quote that is not present rejects the ' +
   'whole submission. `question` is for a human to answer: never return a rewritten ' +
-  'requirement. `confidence` is one of high, medium, low, unknown. Submit with audit_submit.';
+  'requirement, and write it in plain language a project manager would understand — no ' +
+  'internal identifiers, relation names, or system terminology, or the submission is ' +
+  'rejected. `confidence` is one of high, medium, low, unknown. Submit with audit_submit.';
 
 /** Loads a requirement and proves it is auditable. Shared by both audit tools. */
 function requirementFor(store: TraceStore, id: string) {
