@@ -109,14 +109,30 @@ Point `QA_SPINE_RUBRICS` at your own directory to publish rubrics for your team.
 
 The server never calls a model. `audit_requirement` hands the requirement and the rubric
 to the calling agent; `audit_submit` takes what comes back and refuses anything that
-cites an unknown rule or quotes text that is not in the requirement. A hallucinated quote
-cannot enter the store.
+cites an unknown rule, quotes text that is not in the requirement, or phrases `question`
+in internal terminology rather than plain language (the same jargon lint `release_submit`
+runs on `reason`, see [Release risk](#release-risk)). A hallucinated quote cannot enter
+the store.
 
 An agent can answer its own audit questions through `audit_answer`, and nothing prevents it.
 Provenance is the safeguard rather than a lock: the queue shows the producer and model of
 every answered question, and an AI-authored answer is drawn in the chain view in the colour
 used for AI artifacts. If you need approval before an AI answer counts as resolving a
 finding, the `approvedBy` field on every artifact's provenance is the place to build it.
+
+The audit is also reachable from the command line, so a non-JavaScript caller can run it:
+
+```bash
+node dist/server.js audit-requirement requirement_9f8e            # → requirement + rubric + instructions
+echo '{"requirementId":"…","findings":[…],"provenance":{…}}' \
+  | node dist/server.js audit-submit                              # → {"recorded":[ids]}
+```
+
+Findings must arrive through `audit-submit` rather than `trace_record`. It rejects a finding
+citing an unknown rule id, a quote that is not verbatim in the requirement, or a `question`
+written in internal terminology instead of plain language — all-or-nothing — that check is
+what stops a hallucinated quote entering the store, and writing findings any other
+way bypasses it.
 
 ## Release risk
 
