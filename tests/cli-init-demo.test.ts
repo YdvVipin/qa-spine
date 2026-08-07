@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { TraceStore } from '../src/trace/store.ts';
+import { runDemo } from '../src/demo.ts';
 
 const REPO = process.cwd();
 
@@ -111,5 +113,78 @@ test('init never creates a store directory', () => {
     run(['init'], dir);
     assert.ok(!existsSync(join(dir, '.qa-spine')), 'init must not create .qa-spine/');
     assert.ok(!existsSync(join(dir, 'should-never-appear.db')), 'init must not touch QA_SPINE_DB');
+  });
+});
+
+function withDemo(fn: (db: string, brief: string) => void) {
+  const dir = mkdtempSync(join(tmpdir(), 'qa-spine-demo-'));
+  try {
+    fn(join(dir, 'demo.db'), join(dir, 'brief.html'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('runDemo seeds the whole arc and writes the brief', () => {
+  withDemo((db, brief) => {
+    const { store, verdictId } = runDemo(db, brief);
+    assert.equal(store.list(undefined, 1e9).length, 7);
+    assert.ok(verdictId.startsWith('verdict_'));
+    assert.ok(existsSync(brief));
+  });
+});
+
+test("the brief reads as a hold and names the open question", () => {
+  withDemo((db, brief) => {
+    runDemo(db, brief);
+    const html = readFileSync(brief, 'utf8');
+    assert.match(html, /Not ready to ship/);
+    assert.match(html, /What happens when notification delivery fails\?/);
+  });
+});
+
+test('the seeded graph is connected — the verdict is reachable from the requirement', () => {
+  withDemo((db, brief) => {
+    const { store, verdictId } = runDemo(db, brief);
+    const requirement = store.list('requirement', 10)[0];
+    const chain = store.chain(requirement.id);
+    assert.ok(chain, 'requirement must have a chain');
+    assert.equal(chain.nodes.length, 7, 'every artifact should be reachable, not seven islands');
+    assert.ok(chain.nodes.some((n: any) => n.id === verdictId));
+  });
+});
+
+test('one question is answered and one is left open', () => {
+  withDemo((db, brief) => {
+    const { store } = runDemo(db, brief);
+    const findings = store.list('finding', 10);
+    assert.equal(findings.length, 2);
+
+    const openFindings = store.openFindings();
+    assert.equal(openFindings.length, 1, 'exactly one question should still be waiting');
+    assert.equal(openFindings[0].content.category, 'AMB-UNTESTABLE');
+  });
+});
+
+test('the verdict went through recordVerdict, not a raw write', () => {
+  withDemo((db, brief) => {
+    const { store, verdictId } = runDemo(db, brief);
+    const verdict = store.get(verdictId);
+    assert.ok(verdict);
+    // liveFindings is computed by recordVerdict from real signals. A raw store.record
+    // could not have produced it, so this is what makes the demo a check on the gate
+    // rather than a staged picture of one.
+    const live = verdict.content.liveFindings;
+    assert.ok(Array.isArray(live) && live.length === 1, 'liveFindings must name the open finding');
+    const open = store.openFindings()[0];
+    assert.equal(live[0], open.id);
+  });
+});
+
+test('running the demo twice does not stack a second copy', () => {
+  withDemo((db, brief) => {
+    runDemo(db, brief);
+    const { store } = runDemo(db, brief);
+    assert.equal(store.list(undefined, 1e9).length, 7, 'the ledger is append-only — start clean');
   });
 });

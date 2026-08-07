@@ -3,7 +3,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { TraceStore } from './trace/store.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
 import {
@@ -461,6 +462,35 @@ if (invokedAsScript()) {
       console.log('Set QA_SPINE_RUBRICS to use rubrics from somewhere other than ./rubrics.');
 
       if (failed) process.exitCode = 1;
+      break;
+    }
+
+    case 'demo': {
+      // QA_SPINE_DB is deliberately ignored: the point of the demo is that it does not
+      // write where your data lives. The ledger is append-only, so a demo seeded into a
+      // real store would be permanent.
+      const demoDb = join(tmpdir(), 'qa-spine-demo.db');
+      const briefPath = join(tmpdir(), 'qa-spine-demo-brief.html');
+
+      let demo: { store: InstanceType<typeof TraceStore>; verdictId: string };
+      try {
+        const { runDemo } = await import('./demo.ts');
+        demo = runDemo(demoDb, briefPath);
+      } catch (err) {
+        // Fail before starting the Inspector — nobody should be shown a half-built store.
+        console.error(`demo failed while seeding: ${err instanceof Error ? err.message : err}`);
+        process.exitCode = 1;
+        break;
+      }
+
+      const port = Number(process.argv[3] ?? process.env.QA_SPINE_PORT ?? 4700);
+      const { startInspector } = await import('./inspector/server.ts');
+      await startInspector(demo.store, port);
+
+      console.log(`seeded ${demoDb}`);
+      console.log(`brief  ${briefPath}`);
+      console.log(`\nqa-spine inspector → http://127.0.0.1:${port}`);
+      console.log('\nA throwaway store — your own data is untouched. Ctrl-C to stop.');
       break;
     }
 
