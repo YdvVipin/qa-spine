@@ -18,21 +18,30 @@ an unanswered question.
 Node >= 22.5 (uses the built-in `node:sqlite` — no native build step, no dependencies
 beyond the MCP SDK and Zod).
 
-## Run it
+## Quickstart
+
+```bash
+npx qa-spine demo     # see it working — writes only to a temp file
+npx qa-spine init     # set up your project
+```
+
+`demo` seeds a worked example into a throwaway database, writes a release brief beside it, and
+opens the Inspector on it. It never touches your own store: the ledger is append-only, so anything
+seeded into it would be permanent.
+
+`init` copies the ambiguity rubric into your project so your team owns and versions it, adds
+`.qa-spine/` to `.gitignore`, and prints the line to register the MCP server with Claude Code.
+
+The trace store is a SQLite file at `.qa-spine/trace.db`, overridable with `QA_SPINE_DB`. Rubrics
+are read from the package unless you point `QA_SPINE_RUBRICS` at your own directory.
+
+## Working on qa-spine itself
 
 ```bash
 npm install
 npm test
 npm run build
 ```
-
-Register with Claude Code:
-
-```bash
-claude mcp add qa-spine -- node /path/to/qa-spine/dist/server.js
-```
-
-The trace store is a SQLite file at `.qa-spine/trace.db`, overridable with `QA_SPINE_DB`.
 
 ## Tools
 
@@ -51,8 +60,7 @@ The trace store is a SQLite file at `.qa-spine/trace.db`, overridable with `QA_S
 ## The Inspector
 
 ```bash
-node examples/seed-demo.ts   # one complete spine to look at
-npm run inspect              # → http://127.0.0.1:4700
+npx qa-spine demo            # one complete spine to look at, in a throwaway store
 ```
 
 The Inspector is an **instrument for judging whether agent output is any good**, not a
@@ -180,8 +188,8 @@ panel a human's eye meets. An overridden ship is not buried in the record — it
 thing a human sees.
 
 None of this is enforced anywhere but `release_submit` itself. `trace_record` can append a
-`type: 'verdict'` artifact directly — `examples/seed-demo.ts` does exactly that — with no
-signal check and no override, because the gate lives in `recordVerdict`, not in the store. And
+`type: 'verdict'` artifact directly with no signal check and no override, because the gate
+lives in `recordVerdict`, not in the store. And
 the veto itself can be defeated cleanly: appending any artifact with a `supersedes` edge to an
 open finding retires it, whether that edge came from `audit_answer` or a raw `trace_record`
 call, after which `assess_release_risk` sees no signal at all and a `ship` records no override
