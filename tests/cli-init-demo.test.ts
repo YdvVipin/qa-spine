@@ -94,7 +94,15 @@ test('init prints an mcp line naming a server.js that exists', () => {
     const { out } = run(['init'], dir);
     const match = out.match(/claude mcp add qa-spine -- node (\S+)/);
     assert.ok(match, `expected an mcp line, got:\n${out}`);
-    assert.ok(existsSync(match[1]), `printed path should exist: ${match[1]}`);
+    const printed = match[1];
+    // Check shape (absolute, ends with dist/server.js) rather than disk existence.
+    // Tests run before build, so dist/ may not exist yet. The test catches regressions
+    // like printing a relative path or a wrong location by validating the shape.
+    assert.ok(resolve(printed) === printed, `path must be absolute: ${printed}`);
+    assert.ok(printed.endsWith('dist/server.js'), `path must end with dist/server.js: ${printed}`);
+    // Ensure it resolves under the package root, not the user's cwd.
+    const packageRoot = resolve(REPO);
+    assert.ok(printed.startsWith(packageRoot), `path must resolve under package root: ${printed}`);
   });
 });
 
