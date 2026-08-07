@@ -2,7 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { TraceStore } from './trace/store.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
@@ -279,9 +279,32 @@ export function reviewExport(store: TraceStore): string {
     .join('\n');
 }
 
-if (import.meta.filename === process.argv[1]) {
+/**
+ * npm installs the `bin` as a symlink (`node_modules/.bin/qa-spine`), so argv[1] is the
+ * link while import.meta.filename is the resolved target: comparing them raw makes the
+ * published CLI a silent no-op. realpath both sides; a non-file argv[1] means not us.
+ */
+function invokedAsScript(): boolean {
+  try {
+    return !!process.argv[1] && realpathSync(process.argv[1]) === import.meta.filename;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedAsScript()) {
+  const subcommand = process.argv[2];
   const path = dbPath();
-  mkdirSync(dirname(path), { recursive: true });
+  // `init` and `demo` never read or write the configured store, so they must not
+  // create its directory either — a demo that leaves an empty .qa-spine/ in your
+  // working directory has already broken the promise it makes in its own output.
+  //
+  // ponytail: an exempt list rather than moving this into each case that opens a
+  // store. Seven cases need it and two do not; inverting that is more churn than
+  // it buys. If a third exempt command appears, move it into the cases instead.
+  if (subcommand !== 'init' && subcommand !== 'demo') {
+    mkdirSync(dirname(path), { recursive: true });
+  }
 
   switch (process.argv[2]) {
     case 'inspect': {
@@ -387,6 +410,57 @@ if (import.meta.filename === process.argv[1]) {
         console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
         process.exitCode = 1;
       }
+      break;
+    }
+
+    case 'init': {
+      // Human-readable on stdout, errors on stderr — this is a command a person runs
+      // and reads, unlike `record` whose caller parses one JSON object.
+      const packageRoot = resolve(import.meta.dirname, '..');
+      let failed = false;
+
+      // 1. The rubric. The README calls it "the thing a team argues about in review";
+      // that is only true once the team owns the file and can commit it.
+      const rubricDest = resolve(process.cwd(), 'rubrics', 'ambiguity.json');
+      if (existsSync(rubricDest)) {
+        console.log('· rubrics/ambiguity.json already exists — left alone');
+      } else {
+        try {
+          mkdirSync(dirname(rubricDest), { recursive: true });
+          copyFileSync(resolve(packageRoot, 'rubrics', 'ambiguity.json'), rubricDest);
+          console.log('✓ rubrics/ambiguity.json — yours now, edit and commit it');
+        } catch (err) {
+          console.error(`could not write rubrics/ambiguity.json: ${err instanceof Error ? err.message : err}`);
+          failed = true;
+        }
+      }
+
+      // 2. .gitignore — a SQLite file in git means a binary merge conflict on every
+      // parallel branch.
+      const gitignorePath = resolve(process.cwd(), '.gitignore');
+      const ENTRY = '.qa-spine/';
+      try {
+        const current = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+        if (current.split('\n').some((line) => line.trim() === ENTRY)) {
+          console.log(`· .gitignore already ignores ${ENTRY}`);
+        } else {
+          const separator = current && !current.endsWith('\n') ? '\n' : '';
+          writeFileSync(gitignorePath, `${current}${separator}${ENTRY}\n`);
+          console.log(`✓ .gitignore += ${ENTRY}`);
+        }
+      } catch (err) {
+        console.error(`could not update .gitignore: ${err instanceof Error ? err.message : err}`);
+        failed = true;
+      }
+
+      // 3. The MCP line. The path is inside node_modules and differs per install —
+      // nobody should have to go and find it.
+      console.log('\nRegister with Claude Code:');
+      console.log(`  claude mcp add qa-spine -- node ${resolve(packageRoot, 'dist', 'server.js')}`);
+      console.log('\nThen: npx qa-spine demo   # see it working — writes only to a temp file');
+      console.log('Set QA_SPINE_RUBRICS to use rubrics from somewhere other than ./rubrics.');
+
+      if (failed) process.exitCode = 1;
       break;
     }
 
