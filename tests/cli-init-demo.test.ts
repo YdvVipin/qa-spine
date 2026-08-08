@@ -4,18 +4,33 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { TraceStore } from '../src/trace/store.ts';
 import { runDemo } from '../src/demo.ts';
 
 const REPO = process.cwd();
 
-/** Runs a subcommand from a scratch cwd so nothing touches the repo. */
-function run(args: string[], cwd: string): { code: number; out: string; err: string } {
+/**
+ * Runs a subcommand from a scratch cwd so nothing touches the repo.
+ *
+ * QA_SPINE_DB is nested one directory deep on purpose. The store-directory guard is
+ * `mkdirSync(dirname(QA_SPINE_DB))`, so pointing it straight at the scratch cwd would
+ * make that call a no-op on a directory that already exists — and the test asserting
+ * the guard would pass whether or not the guard was there.
+ */
+function run(
+  args: string[],
+  cwd: string,
+  opts: { unsetDb?: boolean } = {},
+): { code: number; out: string; err: string } {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    QA_SPINE_DB: join(cwd, 'should-never-appear', 'trace.db'),
+  };
+  if (opts.unsetDb) delete env.QA_SPINE_DB;
   try {
     const out = execFileSync('node', [resolve(REPO, 'src/server.ts'), ...args], {
       cwd,
       encoding: 'utf8',
-      env: { ...process.env, QA_SPINE_DB: join(cwd, 'should-never-appear.db') },
+      env,
     });
     return { code: 0, out, err: '' };
   } catch (err: any) {
@@ -111,8 +126,16 @@ test('init prints an mcp line naming a server.js that exists', () => {
 test('init never creates a store directory', () => {
   withScratch((dir) => {
     run(['init'], dir);
+    assert.ok(
+      !existsSync(join(dir, 'should-never-appear')),
+      'init must not create the configured store directory',
+    );
+
+    // Again with QA_SPINE_DB unset, so the default `.qa-spine/trace.db` applies — the
+    // path a real `npx qa-spine init` takes, and the one the output promises it leaves
+    // alone.
+    run(['init'], dir, { unsetDb: true });
     assert.ok(!existsSync(join(dir, '.qa-spine')), 'init must not create .qa-spine/');
-    assert.ok(!existsSync(join(dir, 'should-never-appear.db')), 'init must not touch QA_SPINE_DB');
   });
 });
 
