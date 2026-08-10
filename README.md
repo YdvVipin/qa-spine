@@ -238,6 +238,64 @@ English that merely resembles jargon ("our finding was that…", "could not trac
 cause") is accepted, because rejecting a legitimate sentence on a release-blocking call
 is worse than letting one awkward word through.
 
+## The CI gate
+
+The check is only worth having if it runs without anyone remembering to run it.
+
+```bash
+npx qa-spine gate --since origin/main          # advisory: report and exit
+npx qa-spine gate --since origin/main --record --release-ref v1.4.0
+```
+
+`--since` derives what the change touched from git: file paths from the diff, ticket keys
+from the commit messages. `--changed` adds refs directly, for keys that live in a pull
+request title rather than a commit. Neither needs a network or a token.
+
+**The exit code is the product.** `0` nothing blocks, `1` an unanswered question is live,
+`2` the gate could not tell. An empty store, an unknown git ref, and no refs at all are
+all `2` — never a green check, because a gate that reports "all clear" when it actually
+checked nothing is worse than no gate.
+
+Advisory by default: it writes nothing, and that is what belongs on every push. `--record`
+writes a verdict and belongs on a release event. The ledger is append-only, so a verdict
+per push could never be removed, and a month of ordinary work would bury every real
+release decision under thousands of machine-written ones.
+
+`--record` records what it found, hold included — a release that did not go out because a
+question was never answered is exactly the decision worth keeping, and the one a project
+manager most needs the brief for.
+
+**Shipping anyway needs a name.** `--override-reason` requires `--approved-by`, and the
+verdict records both alongside the questions that were open at the time. The gate writes
+its own reason only where the reason is a statement of fact, and says so plainly when
+nothing in the record covered the change at all — a release where nothing matched is not
+a clean release, and reporting it as one would manufacture confidence the ledger never
+earned.
+
+### GitHub Actions
+
+Copy [examples/github-workflow.yml](examples/github-workflow.yml) into
+`.github/workflows/`:
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }        # --since needs history
+- uses: YdvVipin/qa-spine@v1
+  with:
+    db: .qa-spine/trace.db
+    since: ${{ github.event.pull_request.base.sha }}
+    comment: 'true'
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The token is used by `gh` to post the comment and never reaches qa-spine, which
+authenticates to nothing. Everything the action does beyond that is a shell call to the
+same CLI, so any other CI system is a few lines of its own YAML rather than a port.
+
+**The store is yours to provide.** Commit it, restore it from a cache, or fetch it before
+the step runs — but it has to be there. The action fails the job when it is missing or
+empty rather than reporting a clean release.
+
 ## Roadmap
 
 - **Phase 1 — trace spine.** Done.
@@ -248,8 +306,12 @@ is worse than letting one awkward word through.
   questions, where an answer supersedes the finding it resolves. Done.
 - **Phase 3 — `assess_release_risk`.** One-page release brief with a verdict, surfacing a
   requirement-stage finding that was never resolved and touches a changed area. Done.
-- **Phase 4 — `generate_fixtures`.** Schema-validated test data with locale packs.
-- **Phase 5 — packaging.** `npx qa-spine`, published rubrics, example project.
+- **Phase 5 — packaging.** `npx qa-spine`, `init`, `demo`, published rubrics. Done.
+- **Phase 4 — delivery integration.** `qa-spine gate` and a GitHub Action, so the check
+  runs on every change instead of when somebody remembers. Done.
+- **Next — test results from CI.** A JUnit-XML adapter, so runs reach the ledger from any
+  pipeline rather than only from a tool wired up by hand.
+- **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
 
 ## License
 
