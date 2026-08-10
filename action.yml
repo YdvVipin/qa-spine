@@ -1,0 +1,136 @@
+name: qa-spine gate
+description: >-
+  Check a change against the qa-spine trace ledger: report unanswered questions on the
+  requirements it touches, and optionally record the release verdict.
+
+inputs:
+  db:
+    description: >-
+      Path to the trace store, relative to the workspace. The store is the consuming
+      project's to provide — commit it, restore it from a cache, or fetch it before this
+      step. A missing or empty store fails the job rather than reporting a clean release.
+    required: true
+  since:
+    description: >-
+      Git ref to compare against, usually the pull request's base. Changed paths and
+      ticket keys are derived from the range. Requires fetch-depth 0 on checkout.
+    required: false
+    default: ''
+  changed:
+    description: >-
+      Extra refs to assess, comma-separated. Use this for ticket keys that live in the
+      pull request title or body rather than in commit messages.
+    required: false
+    default: ''
+  ticket-pattern:
+    description: 'Regular expression matching ticket keys. Defaults to the Jira shape.'
+    required: false
+    default: ''
+  release-ref:
+    description: 'Release identifier recorded on the verdict. Required when record is true.'
+    required: false
+    default: ''
+  record:
+    description: >-
+      Record a verdict. Leave false on pull requests; set it on a release event. The
+      ledger is append-only, so a verdict per push can never be removed.
+    required: false
+    default: 'false'
+  reason:
+    description: 'Verdict reason. Left empty, the gate writes a factual one.'
+    required: false
+    default: ''
+  override-reason:
+    description: 'Why this ships despite an unanswered question. Requires approved-by.'
+    required: false
+    default: ''
+  approved-by:
+    description: 'Who accepted the risk. Required with override-reason.'
+    required: false
+    default: ''
+  comment:
+    description: 'Post the summary as a pull request comment. Needs github-token.'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'Token used only by gh to post the comment. Never seen by qa-spine.'
+    required: false
+    default: ''
+  version:
+    description: 'Version of qa-spine to run.'
+    required: false
+    default: 'latest'
+
+outputs:
+  shippable:
+    description: '"true" when nothing blocks, "false" when an unanswered question does.'
+    value: ${{ steps.run.outputs.shippable }}
+  verdict-id:
+    description: 'The recorded verdict id, empty unless record was true.'
+    value: ${{ steps.run.outputs.verdict-id }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - id: run
+      shell: bash
+      env:
+        QA_SPINE_DB: ${{ inputs.db }}
+      run: |
+        set -o pipefail
+
+        # One run produces both outputs: JSON on stdout, Markdown to gate.md. Running the
+        # gate twice would append a second verdict under --record, and an append-only
+        # ledger cannot remove either.
+        args=(gate --json --summary gate.md)
+        [ -n "${{ inputs.since }}" ]           && args+=(--since "${{ inputs.since }}")
+        [ -n "${{ inputs.changed }}" ]         && args+=(--changed "${{ inputs.changed }}")
+        [ -n "${{ inputs.ticket-pattern }}" ]  && args+=(--ticket-pattern "${{ inputs.ticket-pattern }}")
+        [ -n "${{ inputs.release-ref }}" ]     && args+=(--release-ref "${{ inputs.release-ref }}")
+        [ "${{ inputs.record }}" = "true" ]    && args+=(--record)
+        [ -n "${{ inputs.reason }}" ]          && args+=(--reason "${{ inputs.reason }}")
+        [ -n "${{ inputs.override-reason }}" ] && args+=(--override-reason "${{ inputs.override-reason }}")
+        [ -n "${{ inputs.approved-by }}" ]     && args+=(--approved-by "${{ inputs.approved-by }}")
+
+        # Exit code is the product: 0 shippable, 1 blocked, 2 could not tell. Capture it
+        # rather than letting `set -e` end the step, so the summary still gets posted —
+        # then re-raise it at the bottom so a blocked gate really does fail the job.
+        set +e
+        npx --yes qa-spine@${{ inputs.version }} "${args[@]}" > gate.json 2> gate.err
+        status=$?
+        set -e
+
+        if [ "$status" = "2" ]; then
+          echo "::error::qa-spine gate could not assess this change"
+          cat gate.err >&2
+          exit 2
+        fi
+
+        node -e '
+          const r = JSON.parse(require("fs").readFileSync("gate.json", "utf8"));
+          const out = process.env.GITHUB_OUTPUT;
+          require("fs").appendFileSync(out, `shippable=${r.shippable}\n`);
+          require("fs").appendFileSync(out, `verdict-id=${r.recorded ? r.recorded.verdictId : ""}\n`);
+        '
+
+        cat gate.md >> "$GITHUB_STEP_SUMMARY"
+
+        echo "status=$status" >> "$GITHUB_ENV"
+        exit 0
+
+    - if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: gh pr comment "${{ github.event.pull_request.number }}" --body-file gate.md
+
+    - shell: bash
+      run: |
+        if [ "${status:-0}" != "0" ]; then
+          echo "::error::qa-spine gate: unanswered questions on the areas this change touches"
+          exit 1
+        fi

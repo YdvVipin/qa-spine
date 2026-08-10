@@ -279,6 +279,24 @@ test('a named override ships and records who accepted the risk', () => {
   });
 });
 
+test('--summary writes Markdown while stdout stays JSON, in one run', () => {
+  withStore(({ dir, db }) => {
+    const summary = join(dir, 'gate.md');
+    const before = count(db);
+
+    const { out } = gate(
+      ['--changed', 'PROJ-7', '--record', '--release-ref', 'v2', '--json', '--summary', summary],
+      db,
+    );
+
+    JSON.parse(out); // stdout must stay machine-readable
+    assert.match(readFileSync(summary, 'utf8'), /## qa-spine/);
+    // The reason --summary exists: a caller wanting both formats must not have to run the
+    // gate twice, because under --record that appends a second verdict nothing can remove.
+    assert.equal(count(db), before + 1, 'exactly one verdict for one run');
+  });
+});
+
 test('--brief writes a readable page for the verdict it just recorded', () => {
   withStore(({ dir, db }) => {
     const briefPath = join(dir, 'brief.html');

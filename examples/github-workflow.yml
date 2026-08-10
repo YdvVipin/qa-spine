@@ -1,0 +1,55 @@
+# A template. Copy it to .github/workflows/ in YOUR repository — it lives in examples/
+# precisely so GitHub does not run it here, where qa-spine has no requirements of its own
+# recorded in a trace store and every job would fail.
+#
+# The store is yours to provide. This example commits it at .qa-spine/trace.db; restoring
+# it from a cache or fetching it from shared storage works the same way, so long as the
+# file exists by the time the gate runs. A missing or empty store fails the job rather
+# than reporting a clean release.
+
+name: qa-spine
+
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # only for the comment
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # --since needs history
+
+      # Advisory on pull requests: report, comment, fail the check if a question is
+      # unanswered — but record nothing. The ledger is append-only, and a verdict per
+      # push could never be removed.
+      - if: github.event_name == 'pull_request'
+        uses: YdvVipin/qa-spine@v1
+        with:
+          db: .qa-spine/trace.db
+          since: ${{ github.event.pull_request.base.sha }}
+          # Ticket keys often live in the title rather than the commits.
+          changed: ${{ github.event.pull_request.title }}
+          comment: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # On a tag, record the verdict and keep the brief as a build artifact.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: YdvVipin/qa-spine@v1
+        with:
+          db: .qa-spine/trace.db
+          since: ${{ github.event.before }}
+          release-ref: ${{ github.ref_name }}
+          record: 'true'
+
+# Shipping over an unanswered question needs a person's name against it. There is no
+# default and there will not be one — add both inputs to the release step, by hand, for
+# the one release that needs it:
+#
+#   override-reason: 'Payment outage hotfix; the open question is tracked in PROJ-91.'
+#   approved-by: ${{ github.actor }}
