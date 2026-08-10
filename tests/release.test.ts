@@ -277,7 +277,7 @@ test('recordVerdict allows a ship with an override and records the reason', () =
     cites: [open.id],
     changed: ['PROJ-42'],
     override: { reason: 'hotfix, accepted by release manager' },
-    provenance: ai,
+    provenance: { ...ai, approvedBy: 'r.mehta' },
   });
 
   assert.equal(verdict.content.verdict, 'ship');
@@ -285,6 +285,45 @@ test('recordVerdict allows a ship with an override and records the reason', () =
     reason: 'hotfix, accepted by release manager',
     findings: [open.id],
   });
+  assert.equal(verdict.provenance.approvedBy, 'r.mehta');
+});
+
+test('recordVerdict rejects an override with nobody named as approving it', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+  const before = store.list(undefined, 1e9).length;
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1',
+      verdict: 'ship',
+      reason: 'Hotfix. The open question is cosmetic and tracked separately.',
+      cites: [open.id],
+      changed: ['PROJ-42'],
+      override: { reason: 'hotfix, accepted by release manager' },
+      provenance: ai,
+    }),
+    /approvedBy/,
+  );
+  assert.equal(store.list(undefined, 1e9).length, before, 'nothing may be recorded');
+});
+
+test('a blank approvedBy is refused the same as a missing one', () => {
+  const store = new TraceStore(':memory:');
+  const { open } = seedRelease(store);
+
+  assert.throws(
+    () => recordVerdict(store, {
+      releaseRef: 'release/1',
+      verdict: 'ship',
+      reason: 'Hotfix. The open question is cosmetic and tracked separately.',
+      cites: [open.id],
+      changed: ['PROJ-42'],
+      override: { reason: 'hotfix, accepted by release manager' },
+      provenance: { ...ai, approvedBy: '   ' },
+    }),
+    /approvedBy/,
+  );
 });
 
 test('recordVerdict rejects an override supplied with a hold verdict', () => {

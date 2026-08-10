@@ -222,6 +222,18 @@ export function recordVerdict(
     );
   }
 
+  // An override that actually overrides something needs a name against it. Free text alone
+  // was tolerable while overriding required a person at a terminal; a pipeline that can
+  // record one widens that to anyone able to edit a workflow file, so "who accepted this
+  // risk" stops being optional. Gated on `signals.length` for the same reason the override
+  // itself is (see below): an override that overrode nothing is discarded, not enforced, so
+  // demanding a name for it would reject the defensive caller I1 exists to tolerate.
+  if (overrideReason && signals.length && !input.provenance.approvedBy?.trim()) {
+    throw new Error(
+      'override requires provenance.approvedBy naming who accepted the risk',
+    );
+  }
+
   // I1/I2: record an override only when it actually overrode a live signal — otherwise a
   // defensively-always-sent override would land on a clean release, and the Inspector's
   // "⚠ shipped over unresolved findings" callout would be asserting something false. And

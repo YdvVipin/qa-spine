@@ -57,6 +57,7 @@ tbody tr:hover { background: var(--panel); }
 .type { color: var(--accent); }
 .producer-ai { color: var(--ai); }
 .producer-human { color: var(--dim); }
+.producer-tool { color: var(--dim); font-style: italic; }
 .empty { color: var(--dim); padding: 2rem 0; }
 
 /* --- detail --- */

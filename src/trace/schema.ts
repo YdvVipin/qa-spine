@@ -31,14 +31,21 @@ export const Relation = z.enum([
 ]);
 
 /**
- * Who produced an artifact and, for AI, exactly what produced it. `model` and
+ * Who produced an artifact and, for a machine, exactly what produced it. `model` and
  * `promptVersion` are mandatory for AI output: an AI artifact that cannot say which
  * model and which prompt version made it is not traceable, which defeats the point.
+ *
+ * `tool` is for deterministic producers — a CI gate, an importer — which have no model
+ * and no prompt, and for which `human` would be a lie. It carries the same obligation in
+ * its own terms: a tool-produced artifact must name the tool. Recording pipeline output as
+ * `human` would corrupt the one field this project treats as load-bearing everywhere else.
  */
 export const ProvenanceInput = z.object({
-  producer: z.enum(['human', 'ai']),
+  producer: z.enum(['human', 'ai', 'tool']),
   model: z.string().optional(),
   promptVersion: z.string().optional(),
+  tool: z.string().optional(),
+  toolVersion: z.string().optional(),
   inputDigest: z.string().optional(),
   approvedBy: z.string().optional(),
   approvedAt: z.string().optional(),
@@ -46,8 +53,13 @@ export const ProvenanceInput = z.object({
 
 /** The refinement is dropped from `ProvenanceInput` so tool wire schemas stay plain JSON Schema. */
 export const Provenance = ProvenanceInput.refine(
-  (p) => p.producer === 'human' || (p.model && p.promptVersion),
-  { message: 'AI-produced artifacts must record model and promptVersion' },
+  (p) =>
+    p.producer === 'human' ||
+    (p.producer === 'tool' ? !!p.tool : !!p.model && !!p.promptVersion),
+  {
+    message:
+      'AI-produced artifacts must record model and promptVersion; tool-produced artifacts must record tool',
+  },
 );
 
 export const Artifact = z.object({

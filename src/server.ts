@@ -233,9 +233,14 @@ export function createServer(store: TraceStore) {
           .optional()
           .describe(
             'Required to ship while a signal is live; recorded on the verdict together with ' +
-              "the findings it overrode. Throws if given alongside verdict: 'hold'.",
+              "the findings it overrode. Throws if given alongside verdict: 'hold'. When it " +
+              'actually overrides a live signal, `provenance.approvedBy` must name who ' +
+              'accepted the risk.',
           ),
-        provenance: ProvenanceInput.describe('Who decided. AI must give `model` and `promptVersion`.'),
+        provenance: ProvenanceInput.describe(
+          'Who decided. AI must give `model` and `promptVersion`; a tool must give `tool`. ' +
+            'Set `approvedBy` when overriding a live signal.',
+        ),
       },
     },
     (args) => {

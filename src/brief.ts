@@ -124,7 +124,18 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const reviewed = store.edgesTo(verdict.id).some((e) => e.relation === 'reviews');
   const reviewNote = reviewed ? 'Later reviewed by a person' : 'No human review was recorded';
   const p = verdict.provenance;
-  const who = p.producer === 'ai' ? `Written by an AI (${esc(p.model)}) · ${reviewNote}` : `Written by a person · ${reviewNote}`;
+  // Three producers, three bylines. `tool` must not fall through to "Written by a person":
+  // a verdict a pipeline recorded has no human author, and saying otherwise on the one page
+  // a non-technical reader actually reads is the worst place in the product to be wrong
+  // about who decided something.
+  const author =
+    p.producer === 'ai'
+      ? `Written by an AI (${esc(p.model)})`
+      : p.producer === 'tool'
+        ? `Recorded automatically by ${esc(p.tool)}`
+        : 'Written by a person';
+  const approved = p.approvedBy ? ` · Approved by ${esc(p.approvedBy)}` : '';
+  const who = `${author}${approved} · ${reviewNote}`;
 
   const questionBlocks = questions
     .map((f) => {

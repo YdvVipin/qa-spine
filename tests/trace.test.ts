@@ -82,6 +82,28 @@ test('AI artifacts cannot be recorded without model and promptVersion', () => {
   );
 });
 
+test('tool artifacts cannot be recorded without naming the tool', () => {
+  const s = store();
+  assert.throws(
+    () => s.record({ type: 'test_run', content: {}, provenance: { producer: 'tool' } }),
+    /tool/,
+  );
+});
+
+test('a tool-produced artifact records the tool and its version', () => {
+  const s = store();
+  const run = s.record({
+    type: 'test_run',
+    content: { status: 'passed' },
+    provenance: { producer: 'tool', tool: 'qa-spine gate', toolVersion: '0.1.0' },
+  });
+
+  const back = s.get(run.id);
+  assert.equal(back?.provenance.producer, 'tool');
+  assert.equal(back?.provenance.tool, 'qa-spine gate');
+  assert.equal(back?.provenance.toolVersion, '0.1.0');
+});
+
 test('the store is append-only, enforced below this module', () => {
   const s = store();
   const { req } = fullChain(s);
