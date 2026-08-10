@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { parseArgs } from 'node:util';
 import { TraceStore } from './trace/store.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
 import {
@@ -415,6 +416,60 @@ if (invokedAsScript()) {
       } catch (err) {
         console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
         process.exitCode = 1;
+      }
+      break;
+    }
+
+    case 'gate': {
+      // A third stream convention, deliberately. `record` puts errors on stdout as JSON
+      // because its caller parses one object; `brief` puts them on stderr because its output
+      // is a document being redirected. Here the real product is the exit code — stdout
+      // carries whichever reader was asked for, and a diagnostic must never be mistaken for
+      // either. 0 shippable, 1 blocked, 2 could not tell.
+      try {
+        const { values } = parseArgs({
+          args: process.argv.slice(3),
+          options: {
+            changed: { type: 'string', multiple: true },
+            since: { type: 'string' },
+            'release-ref': { type: 'string' },
+            record: { type: 'boolean' },
+            reason: { type: 'string' },
+            'override-reason': { type: 'string' },
+            'approved-by': { type: 'string' },
+            'ticket-pattern': { type: 'string' },
+            brief: { type: 'string' },
+            json: { type: 'boolean' },
+          },
+          allowPositionals: false,
+        });
+
+        // Both spellings, because CI writes one long line and a person writes several.
+        const changed = (values.changed ?? []).flatMap((c) => c.split(','));
+
+        if (!!values['override-reason'] !== !!values['approved-by']) {
+          throw new Error('--override-reason and --approved-by must be given together');
+        }
+
+        const { runGate, renderSummary } = await import('./gate.ts');
+        const store = new TraceStore(path);
+        const result = runGate(store, {
+          changed,
+          since: values.since,
+          ticketPattern: values['ticket-pattern'],
+          releaseRef: values['release-ref'],
+          record: values.record,
+          reason: values.reason,
+          overrideReason: values['override-reason'],
+          approvedBy: values['approved-by'],
+          briefPath: values.brief,
+          toolVersion: VERSION,
+        });
+        console.log(values.json ? JSON.stringify(result, null, 2) : renderSummary(result));
+        process.exitCode = result.shippable ? 0 : 1;
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 2;
       }
       break;
     }
