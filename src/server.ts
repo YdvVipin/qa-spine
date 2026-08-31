@@ -287,6 +287,28 @@ export function reviewExport(store: TraceStore): string {
 }
 
 /**
+ * The optional port `inspect` and `demo` share. Both used to read it as
+ * `Number(process.argv[3] ?? …)`, so anything non-numeric — `--port 5000`, the obvious
+ * guess — became NaN and reached `server.listen()` as an unhandled RangeError with a
+ * stack trace. `parseArgs` is what `gate` already uses, and it rejects an unknown flag
+ * on its own. The bare positional stays supported: before `--port` it was the only way.
+ */
+export function resolvePort(args: string[]): number {
+  const { values, positionals } = parseArgs({
+    args,
+    options: { port: { type: 'string' } },
+    allowPositionals: true,
+  });
+  const raw = values.port ?? positionals[0] ?? process.env.QA_SPINE_PORT;
+  if (raw === undefined || raw === '') return 4700;
+  // Node's own accepted range, checked here so the message names the bad value.
+  if (!/^\d+$/.test(raw) || Number(raw) > 65535) {
+    throw new Error(`invalid port: ${raw} (expected 0-65535)`);
+  }
+  return Number(raw);
+}
+
+/**
  * npm installs the `bin` as a symlink (`node_modules/.bin/qa-spine`), so argv[1] is the
  * link while import.meta.filename is the resolved target: comparing them raw makes the
  * published CLI a silent no-op. realpath both sides; a non-file argv[1] means not us.
@@ -315,9 +337,16 @@ if (invokedAsScript()) {
 
   switch (process.argv[2]) {
     case 'inspect': {
+      let port: number;
+      try {
+        port = resolvePort(process.argv.slice(3));
+      } catch (err) {
+        console.error(`qa-spine inspect: ${err instanceof Error ? err.message : err}`);
+        process.exitCode = 1;
+        break;
+      }
       const store = new TraceStore(path);
       const { startInspector } = await import('./inspector/server.ts');
-      const port = Number(process.argv[3] ?? process.env.QA_SPINE_PORT ?? 4700);
       await startInspector(store, port);
       console.error(`qa-spine inspector → http://127.0.0.1:${port}  (reading ${path})`);
       break;
@@ -531,6 +560,17 @@ if (invokedAsScript()) {
     }
 
     case 'demo': {
+      // Resolved before seeding: a bad port should cost nothing, not a seeded store the
+      // user never gets shown.
+      let port: number;
+      try {
+        port = resolvePort(process.argv.slice(3));
+      } catch (err) {
+        console.error(`qa-spine demo: ${err instanceof Error ? err.message : err}`);
+        process.exitCode = 1;
+        break;
+      }
+
       // QA_SPINE_DB is deliberately ignored: the point of the demo is that it does not
       // write where your data lives. The ledger is append-only, so a demo seeded into a
       // real store would be permanent.
@@ -548,7 +588,6 @@ if (invokedAsScript()) {
         break;
       }
 
-      const port = Number(process.argv[3] ?? process.env.QA_SPINE_PORT ?? 4700);
       const { startInspector } = await import('./inspector/server.ts');
       await startInspector(demo.store, port);
 
