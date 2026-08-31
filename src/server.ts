@@ -321,8 +321,57 @@ function invokedAsScript(): boolean {
   }
 }
 
+const USAGE = `qa-spine ${VERSION} — QA lifecycle tools over an append-only trace spine
+
+usage: qa-spine [subcommand]
+
+  (none)                  run as an MCP server on stdio
+  init                    copy the rubric into ./rubrics and gitignore .qa-spine/
+  demo [--port N]         seed a throwaway store and open the Inspector
+  inspect [--port N]      browse the trace store in the Inspector
+  record                  append an artifact (JSON payload on stdin)
+  brief <verdictId>       render a release verdict as self-contained HTML
+  audit-requirement <id>  load a requirement plus the ambiguity rubric
+  audit-submit            record audit findings (JSON payload on stdin)
+  gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
+  review-export           dump human review labels as JSONL
+  help                    show this screen
+
+environment:
+  QA_SPINE_DB    store path (default .qa-spine/trace.db)
+  QA_SPINE_PORT  inspector port (default 4700)`;
+
+const SUBCOMMANDS = new Set([
+  'init',
+  'demo',
+  'inspect',
+  'record',
+  'brief',
+  'audit-requirement',
+  'audit-submit',
+  'gate',
+  'review-export',
+]);
+
 if (invokedAsScript()) {
   const subcommand = process.argv[2];
+
+  // Resolved before dbPath(): none of these touch a store, so none may create one —
+  // and a typo must not fall through to the stdio MCP server below, which just sits
+  // there looking hung.
+  if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+    console.log(USAGE);
+    process.exit(0);
+  }
+  if (subcommand === 'version' || subcommand === '--version' || subcommand === '-v') {
+    console.log(VERSION);
+    process.exit(0);
+  }
+  if (subcommand !== undefined && !SUBCOMMANDS.has(subcommand)) {
+    console.error(`unknown subcommand '${subcommand}'\n\n${USAGE}`);
+    process.exit(1);
+  }
+
   const path = dbPath();
   // `init` and `demo` never read or write the configured store, so they must not
   // create its directory either — a demo that leaves an empty .qa-spine/ in your
