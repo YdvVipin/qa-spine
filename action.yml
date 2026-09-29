@@ -22,6 +22,14 @@ inputs:
       pull request title or body rather than in commit messages.
     required: false
     default: ''
+  junit:
+    description: >-
+      JUnit XML report paths to record before the gate runs, space-separated; shell globs
+      allowed (e.g. 'reports/**/*.xml'). A failing test on a changed area then blocks. A
+      pattern matching no file fails the job rather than skipping the ingest. Run this step
+      with `if: always()` after your test step, or a failing test job never reaches the gate.
+    required: false
+    default: ''
   ticket-pattern:
     description: 'Regular expression matching ticket keys. Defaults to the Jira shape.'
     required: false
@@ -82,6 +90,28 @@ runs:
         QA_SPINE_DB: ${{ inputs.db }}
       run: |
         set -o pipefail
+
+        # Test results first, into the same store, so the gate below sees them. A glob that
+        # matches nothing is an error: "no reports" read as "no failures" is a false green.
+        if [ -n "${{ inputs.junit }}" ]; then
+          shopt -s nullglob globstar
+          reports=( ${{ inputs.junit }} )
+          shopt -u nullglob globstar
+          if [ "${#reports[@]}" -eq 0 ]; then
+            echo "::error::qa-spine: junit pattern '${{ inputs.junit }}' matched no file"
+            exit 2
+          fi
+          set +e
+          npx --yes qa-spine@${{ inputs.version }} ingest-junit "${reports[@]}" \
+            --run-ref "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > ingest.json 2> ingest.err
+          ingest_status=$?
+          set -e
+          if [ "$ingest_status" != "0" ]; then
+            echo "::error::qa-spine could not record the test reports"
+            cat ingest.err >&2
+            exit 2
+          fi
+        fi
 
         # One run produces both outputs: JSON on stdout, Markdown to gate.md. Running the
         # gate twice would append a second verdict under --record, and an append-only

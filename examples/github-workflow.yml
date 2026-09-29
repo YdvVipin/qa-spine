@@ -25,6 +25,11 @@ jobs:
         with:
           fetch-depth: 0 # --since needs history
 
+      # Your tests, writing JUnit XML. Uncomment `junit:` below to record the results, so a
+      # failing test on a changed area blocks too. The gate steps need `if: always()` (or
+      # `!cancelled()`) alongside their condition, or a failing test job never reaches them.
+      # - run: npm test -- --reporter=junit --reporter-destination=reports/junit.xml
+
       # Advisory on pull requests: report, comment, fail the check if a question is
       # unanswered — but record nothing. The ledger is append-only, and a verdict per
       # push could never be removed.
@@ -35,6 +40,7 @@ jobs:
           since: ${{ github.event.pull_request.base.sha }}
           # Ticket keys often live in the title rather than the commits.
           changed: ${{ github.event.pull_request.title }}
+          # junit: 'reports/**/*.xml'
           comment: 'true'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 

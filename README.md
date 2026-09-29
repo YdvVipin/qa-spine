@@ -9,7 +9,7 @@ Self-hostable, and nothing leaves your machine: the server never calls a model i
 hands requirements and rubrics to the calling agent and validates what comes back. The
 server proposes; it never mutates JIRA, repos or CI without an explicit approval call.
 
-**Status: Phases 1, 1.5, 2, 2.5 and 3 complete.** The trace spine, the Inspector, the ambiguity
+**Status: Phases 1 through 5 complete, plus test results from CI.** The trace spine, the Inspector, the ambiguity
 audit, the queue for answering what it finds, and the release brief that refuses to ship over
 an unanswered question.
 
@@ -54,7 +54,7 @@ npm run build
 | `audit_submit` | Records ambiguity findings, rejecting any that cite an unknown rule or a quote absent from the requirement. |
 | `audit_open` | Lists ambiguity questions still waiting on an answer, each with the requirement text needed to answer it. |
 | `audit_answer` | Records an answer. The answer supersedes the finding, which retires it. |
-| `assess_release_risk` | Given the areas a release touches, returns every unresolved requirement-stage finding on them, plus surrounding artifacts as unscored evidence. Makes no model call. |
+| `assess_release_risk` | Given the areas a release touches, returns every unresolved requirement-stage finding and every failing covering test on them, plus surrounding artifacts as unscored evidence. Makes no model call. |
 | `release_submit` | Records a release verdict. Recomputes the signals itself from `changed` rather than trusting the caller's, and refuses a `ship` while one is live unless given an explicit `override` reason. |
 
 ## The Inspector
@@ -145,9 +145,10 @@ way bypasses it.
 ## Release risk
 
 `assess_release_risk` takes the list of sourceRefs a release touches — JIRA keys, file paths —
-and returns every unresolved finding on the requirements among them, together with the
-artifacts around them as unscored evidence. It makes no model call; the calling agent writes
-the brief.
+and returns two kinds of blocking signal on the requirements among them: every unresolved
+finding, and every covering test whose **latest** run failed or errored (see
+[Test results](#test-results)). The artifacts around them come back as unscored evidence. It
+makes no model call; the calling agent writes the brief.
 
 Matching is exact `sourceRef` equality and changed-ness is never inferred transitively, so the
 caller must pass both file paths and ticket keys. The alternative — walking edges to decide
@@ -272,6 +273,31 @@ nothing in the record covered the change at all — a release where nothing matc
 a clean release, and reporting it as one would manufacture confidence the ledger never
 earned.
 
+### Test results
+
+```bash
+npx qa-spine ingest-junit reports/*.xml --run-ref "$CI_RUN_URL"
+```
+
+`ingest-junit` records JUnit XML — the format nearly every test runner can emit — as test cases
+and runs. A test is tied to a requirement by a ticket key it carries: in its name, its class
+name, or a `<property name="requirement" value="PROJ-42"/>` (what pytest's `record_property`
+emits). A test with no key is still recorded; it simply cannot block anything. A key with no
+matching requirement is reported as `uncovered`.
+
+On the gate, a covering test whose **latest** run failed or errored blocks, exactly like an
+unanswered question, and needs the same named override to ship over. A later passing run
+clears it; nothing is superseded, the newer fact wins. Skipped does not block.
+
+**Flaky tests are named, never excused.** A test that failed and passed on the same commit
+(`--commit`, default `git rev-parse HEAD`), or twice in one report with different outcomes, is
+labelled flaky in the gate output and the brief. It still blocks. Quarantining it
+automatically would be the first thing in qa-spine to relax the gate without a person's name
+on it.
+
+Ingest is all-or-nothing: an unreadable file, malformed XML, or a report with no test cases
+exits 2 and writes nothing. A report that reads as "no tests" is not a clean run.
+
 ### GitHub Actions
 
 Copy [examples/github-workflow.yml](examples/github-workflow.yml) into
@@ -309,8 +335,10 @@ empty rather than reporting a clean release.
 - **Phase 5 — packaging.** `npx qa-spine`, `init`, `demo`, published rubrics. Done.
 - **Phase 4 — delivery integration.** `qa-spine gate` and a GitHub Action, so the check
   runs on every change instead of when somebody remembers. Done.
-- **Next — test results from CI.** A JUnit-XML adapter, so runs reach the ledger from any
-  pipeline rather than only from a tool wired up by hand.
+- **Test results from CI.** `ingest-junit`, and a failing test on a changed area blocks the
+  gate, with flaky tests labelled. Done.
+- **Next — see [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).**
+  Tamper-evidence, requirement versions, faster answering, rubric measurement.
 - **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
 
 ## License

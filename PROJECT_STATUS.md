@@ -20,7 +20,7 @@ evidence) and validates what comes back. It also never mutates JIRA, repos, or C
 own — every write is an explicit call the agent makes, and a `ship` verdict is blocked
 unless the caller supplies an override reason while a signal is live.
 
-## Status: Phases 1–5 complete; JUnit results designed (Sep 2026)
+## Status: Phases 1–5 complete, plus JUnit results (Sep 2026)
 
 | Phase | What | Status |
 |---|---|---|
@@ -32,30 +32,31 @@ unless the caller supplies an override reason while a signal is live.
 | — | **Audit-before-generating** — wires the Phase 2 audit into QAAE's ticket→test pipeline | Done (`efe86c1`) |
 | 5 | Packaging — `npx qa-spine`, `init`, `demo`, published rubrics | Done |
 | 4 | Delivery integration — `qa-spine gate` and a composite GitHub Action | Done |
-| Next | JUnit results — ingest CI reports; a failing test on a changed area blocks | Spec approved (`2026-09-25-junit-results-design.md`), not implemented |
+| — | JUnit results — `ingest-junit`; a failing test on a changed area blocks; flaky tests labelled | Done, on `junit-results` |
 | Later | `generate_fixtures` — schema-validated test data with locale packs | Not started |
 
-What comes after JUnit, and why, is in
+What comes next, and why, is in
 [docs/superpowers/plans/2026-09-29-enhancement-roadmap.md](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).
 
 ## Repository layout
 
 ```
 src/
-  server.ts          655 lines  MCP server + CLI entrypoint (all tool/subcommand wiring)
-  release.ts         273 lines  assess_release_risk / release_submit (release verdicts)
-  gate.ts            247 lines  `qa-spine gate` — the CI release check
+  server.ts          710 lines  MCP server + CLI entrypoint (all tool/subcommand wiring)
+  release.ts         359 lines  assess_release_risk / release_submit (release verdicts)
+  gate.ts            294 lines  `qa-spine gate` — the CI release check
   audit.ts           246 lines  audit_requirement / audit_submit (ambiguity audit)
-  brief.ts           216 lines  verdict -> self-contained HTML brief
+  brief.ts           252 lines  verdict -> self-contained HTML brief
+  junit.ts           263 lines  JUnit XML parser + `ingest-junit` (test results, flaky detection)
   demo.ts            120 lines  seeds the worked example into a throwaway store
   trace/
-    store.ts         282 lines  SQLite-backed append-only store, trigger-enforced
+    store.ts         313 lines  SQLite-backed append-only store, trigger-enforced
     schema.ts         94 lines  Zod schemas for artifacts/edges/provenance
   inspector/
     server.ts        135 lines  loopback-only HTTP server for the Inspector UI
     ui/                         index.html, style.css, app.js (vanilla, no build step)
 
-tests/               3,272 lines across 14 files — 179 tests, all passing
+tests/               3,901 lines across 16 files — 224 tests, all passing
 rubrics/ambiguity.json          the published ambiguity rubric (4 rules, version ambiguity/1)
 action.yml                      composite GitHub Action wrapping `qa-spine gate`
 examples/            import-jira.ts, github-workflow.yml — no Jira coupling in the server
@@ -169,7 +170,7 @@ mtime unchanged) throughout — all verification ran against a scratch DB via `Q
 
 ## Testing
 
-- qa-spine: `npm test` → 179/179 passing, `tsc` clean via `npm run build`.
+- qa-spine: `npm test` → 224/224 passing, `tsc` clean via `npm run build`.
 - QAAE side of the integration: 105 passed, 1 skipped across the auditor, spine-client,
   spine-instrumentation, orchestration-loop and plan-generator suites.
 - Every fix in the final review round was verified with an explicit **round-trip**: revert

@@ -2,6 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -185,7 +186,8 @@ export function createServer(store: TraceStore) {
     {
       description:
         'Given the areas a release touches, return every unresolved requirement-stage finding ' +
-        'on those areas, plus the surrounding artifacts as unscored evidence. Makes no model ' +
+        'and every covering test whose latest run failed on those areas, any flaky tests there, ' +
+        'plus the surrounding artifacts as unscored evidence. Makes no model ' +
         'call: reason over what it returns, then record your brief with `release_submit`. ' +
         'Every signal blocks a ship verdict.',
       inputSchema: {
@@ -334,6 +336,7 @@ usage: qa-spine [subcommand]
   audit-requirement <id>  load a requirement plus the ambiguity rubric
   audit-submit            record audit findings (JSON payload on stdin)
   gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
+  ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
   help                    show this screen
 
@@ -350,6 +353,7 @@ const SUBCOMMANDS = new Set([
   'audit-requirement',
   'audit-submit',
   'gate',
+  'ingest-junit',
   'review-export',
 ]);
 
@@ -550,6 +554,57 @@ if (invokedAsScript()) {
         if (values.summary) writeFileSync(values.summary, renderSummary(result));
         console.log(values.json ? JSON.stringify(result, null, 2) : renderSummary(result));
         process.exitCode = result.shippable ? 0 : 1;
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 2;
+      }
+      break;
+    }
+
+    case 'ingest-junit': {
+      // Same stream convention as `gate`: JSON on stdout, a diagnostic on stderr, and exit 2
+      // for anything that stopped the ingest. It is all-or-nothing, so 2 means nothing landed.
+      try {
+        const { values, positionals } = parseArgs({
+          args: process.argv.slice(3),
+          options: {
+            'run-ref': { type: 'string' },
+            commit: { type: 'string' },
+            'ticket-pattern': { type: 'string' },
+          },
+          allowPositionals: true,
+        });
+        if (!positionals.length) throw new Error('usage: qa-spine ingest-junit <report.xml>... [--run-ref URL] [--commit SHA]');
+
+        const reports = positionals.map((file) => {
+          try {
+            return { file, xml: readFileSync(file, 'utf8') };
+          } catch (err) {
+            throw new Error(`cannot read ${file}: ${err instanceof Error ? err.message : err}`);
+          }
+        });
+
+        // Flaky detection compares runs on one commit. Outside a repository there is no
+        // commit to record, which only means that comparison cannot happen — not an error.
+        let commit = values.commit;
+        if (commit === undefined) {
+          try {
+            commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+          } catch {
+            commit = undefined;
+          }
+        }
+
+        const { ingestJunit } = await import('./junit.ts');
+        const store = new TraceStore(path);
+        const result = ingestJunit(store, {
+          reports,
+          runRef: values['run-ref'],
+          commit,
+          ticketPattern: values['ticket-pattern'],
+          toolVersion: VERSION,
+        });
+        console.log(JSON.stringify(result, null, 2));
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 2;
