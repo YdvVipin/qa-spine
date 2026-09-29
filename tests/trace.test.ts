@@ -146,3 +146,40 @@ test('linking to a nonexistent artifact fails, and takes the artifact down with 
 test('unknown artifact ids return undefined rather than an empty chain', () => {
   assert.equal(store().chain('requirement_nope'), undefined);
 });
+
+test('record inside transaction() rolls back with it', () => {
+  const store = new TraceStore(':memory:');
+  assert.throws(() =>
+    store.transaction(() => {
+      store.record({ type: 'requirement', content: { text: 'a' }, provenance: { producer: 'human' } });
+      throw new Error('boom');
+    }),
+  /boom/);
+  assert.equal(store.list().length, 0);
+});
+
+test('transaction() commits every record made inside it', () => {
+  const store = new TraceStore(':memory:');
+  const ids = store.transaction(() => [
+    store.record({ type: 'requirement', content: { text: 'a' }, provenance: { producer: 'human' } }).id,
+    store.record({ type: 'requirement', content: { text: 'b' }, provenance: { producer: 'human' } }).id,
+  ]);
+  assert.equal(ids.length, 2);
+  assert.equal(store.list().length, 2);
+});
+
+test('a failed record inside transaction() undoes only itself until the outer throw', () => {
+  const store = new TraceStore(':memory:');
+  store.transaction(() => {
+    store.record({ type: 'requirement', content: { text: 'kept' }, provenance: { producer: 'human' } });
+    assert.throws(() =>
+      store.record({
+        type: 'finding',
+        content: {},
+        provenance: { producer: 'human' },
+        links: [{ to: 'requirement_nope0000', relation: 'derived_from' }],
+      }),
+    );
+  });
+  assert.deepEqual(store.list().map((a) => a.content.text), ['kept']);
+});

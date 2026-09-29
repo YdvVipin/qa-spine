@@ -89,7 +89,9 @@ export class TraceStore {
       createdAt: new Date().toISOString(),
     });
 
-    this.db.exec('BEGIN');
+    // A savepoint, not BEGIN: BEGIN cannot nest, and record() must work both on its own
+    // and inside transaction(). Outside one, a savepoint opens and commits its own.
+    this.db.exec('SAVEPOINT record');
     try {
       this.db
         .prepare('INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?)')
@@ -102,12 +104,25 @@ export class TraceStore {
           artifact.createdAt,
         );
       for (const link of input.links ?? []) this.link(artifact.id, link.to, link.relation);
+      this.db.exec('RELEASE record');
+    } catch (err) {
+      this.db.exec('ROLLBACK TO record; RELEASE record');
+      throw err;
+    }
+    return artifact;
+  }
+
+  /** Runs `fn` in one transaction: every record and link inside it lands, or none does. */
+  transaction<T>(fn: () => T): T {
+    this.db.exec('BEGIN');
+    try {
+      const result = fn();
       this.db.exec('COMMIT');
+      return result;
     } catch (err) {
       this.db.exec('ROLLBACK');
       throw err;
     }
-    return artifact;
   }
 
   link(from: string, to: string, relation: Relation): Edge {
@@ -195,6 +210,22 @@ export class TraceStore {
           LIMIT ?`,
       )
       .all(...params);
+    return (rows as Row[]).map(toArtifact);
+  }
+
+  /**
+   * Artifacts of `type` with a `relation` edge pointing at `toId`, newest first — e.g. the
+   * runs that verify a test case. `rowid` breaks ties: one ingest writes many artifacts
+   * inside the same millisecond, and "latest" must still mean the last one written.
+   */
+  linkedFrom(toId: string, relation: Relation, type: Artifact['type']): Artifact[] {
+    const rows = this.db
+      .prepare(
+        `SELECT a.* FROM artifacts a JOIN edges e ON e.from_id = a.id
+          WHERE e.to_id = ? AND e.relation = ? AND a.type = ?
+          ORDER BY a.created_at DESC, a.rowid DESC`,
+      )
+      .all(toId, relation, type);
     return (rows as Row[]).map(toArtifact);
   }
 
