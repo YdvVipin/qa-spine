@@ -311,3 +311,90 @@ test('--brief writes a readable page for the verdict it just recorded', () => {
     assert.match(html, /Recorded automatically by qa-spine gate/);
   });
 });
+
+/** A test covering PROJ-7 (which has no open questions), with runs recorded oldest first. */
+function addTest(store: TraceStore, runs: { status: string; commit?: string; message?: string }[]) {
+  const req = store.bySourceRef(['PROJ-7']).find((a) => a.type === 'requirement')!;
+  const tool = { producer: 'tool' as const, tool: 'qa-spine ingest-junit' };
+  const tc = store.record({
+    type: 'test_case',
+    sourceRef: 'junit:refunds::button disables',
+    content: { name: 'button disables', classname: 'refunds' },
+    provenance: tool,
+    links: [{ to: req.id, relation: 'covers' }],
+  });
+  return runs.map((content) =>
+    store.record({ type: 'test_run', sourceRef: 'ci/9', content, provenance: tool, links: [{ to: tc.id, relation: 'verifies' }] }).id,
+  );
+}
+
+test('a failing test on a changed requirement blocks and is named', () => {
+  withStore(({ db, store }) => {
+    addTest(store, [{ status: 'failed', message: 'button stayed enabled' }]);
+    const { code, out } = gate(['--changed', 'PROJ-7'], db);
+    assert.equal(code, 1);
+    assert.match(out, /release blocked/);
+    assert.match(out, /1 failing test on areas this change touches/);
+    assert.match(out, /button disables/);
+    assert.match(out, /button stayed enabled/);
+  });
+});
+
+test('--json keeps signals to questions and lists failing tests separately', () => {
+  withStore(({ db, store }) => {
+    const [run] = addTest(store, [{ status: 'error' }]);
+    const r = JSON.parse(gate(['--changed', 'PROJ-7', '--json'], db).out);
+    assert.equal(r.shippable, false);
+    assert.deepEqual(r.signals, []);
+    assert.equal(r.failingTests.length, 1);
+    assert.equal(r.failingTests[0].testRunId, run);
+    assert.equal(r.failingTests[0].status, 'error');
+  });
+});
+
+test('a flaky failing test still blocks, and says it is flaky', () => {
+  withStore(({ db, store }) => {
+    addTest(store, [{ status: 'passed', commit: 'c1' }, { status: 'failed', commit: 'c1' }]);
+    const { code, out } = gate(['--changed', 'PROJ-7'], db);
+    assert.equal(code, 1, 'flaky is reported, never excused');
+    assert.match(out, /button disables.*flaky/);
+  });
+});
+
+test('a flaky test whose latest run passed does not block but is listed', () => {
+  withStore(({ db, store }) => {
+    addTest(store, [{ status: 'failed', commit: 'c1' }, { status: 'passed', commit: 'c1' }]);
+    const { code, out } = gate(['--changed', 'PROJ-7'], db);
+    assert.equal(code, 0);
+    assert.match(out, /no blockers/);
+    assert.match(out, /1 flaky test/);
+    const r = JSON.parse(gate(['--changed', 'PROJ-7', '--json'], db).out);
+    assert.deepEqual(r.flakyTests.map((t: any) => t.name), ['button disables']);
+  });
+});
+
+test('--record over a failing test records a hold naming the run, in plain words', () => {
+  withStore(({ db, store }) => {
+    const [run] = addTest(store, [{ status: 'failed' }]);
+    const { code, out } = gate(['--changed', 'PROJ-7', '--record', '--release-ref', 'v3', '--json'], db);
+    assert.equal(code, 1);
+    const verdict = new TraceStore(db).get(JSON.parse(out).recorded.verdictId)!;
+    assert.equal(verdict.content.verdict, 'hold');
+    assert.deepEqual(verdict.content.liveTestRuns, [run]);
+    assert.match(String(verdict.content.reason), /tests? .*failing/i);
+  });
+});
+
+test('a named override ships over a failing test and records the run it overrode', () => {
+  withStore(({ db, store }) => {
+    const [run] = addTest(store, [{ status: 'failed' }]);
+    const { code, out } = gate(
+      ['--changed', 'PROJ-7', '--record', '--release-ref', 'v4', '--override-reason', 'Stubbed email provider is down.', '--approved-by', 'a.rivera', '--json'],
+      db,
+    );
+    assert.equal(code, 0);
+    const verdict = new TraceStore(db).get(JSON.parse(out).recorded.verdictId)!;
+    assert.equal(verdict.content.verdict, 'ship');
+    assert.deepEqual((verdict.content.override as any).testRuns, [run]);
+  });
+});

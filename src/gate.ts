@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import type { TraceStore } from './trace/store.ts';
-import { assessReleaseRisk, recordVerdict } from './release.ts';
+import { assessReleaseRisk, recordVerdict, type FailingTest } from './release.ts';
 import { renderBrief } from './brief.ts';
 
 export const TOOL = 'qa-spine gate';
@@ -40,6 +40,11 @@ export type GateResult = {
     question: unknown;
     confidence: unknown;
   }[];
+  /** Covering tests whose latest run failed. Separate from `signals` so existing readers of
+   *  the JSON, which expect every signal to be a question, keep working. */
+  failingTests: FailingTest[];
+  /** Tests on changed areas that failed and passed on the same commit. Information only. */
+  flakyTests: { testCaseId: string; requirementId: string; name: string }[];
   recorded: { verdictId: string; verdict: 'ship' | 'hold'; briefPath: string | null } | null;
 };
 
@@ -94,13 +99,20 @@ export function refsFromGit(since: string, cwd: string, ticketPattern: string): 
  * clean release, and reporting it in the first case's words would manufacture confidence the
  * record never earned.
  */
-export function defaultReason(signalCount: number, matchedCount: number): string {
+export function defaultReason(signalCount: number, matchedCount: number, failingCount = 0): string {
+  if (signalCount && failingCount) {
+    return (
+      'One or more questions raised when this work was specified have not been answered, ' +
+      'and tests covering areas this release changed are failing.'
+    );
+  }
   if (signalCount) {
     return (
       'One or more questions raised when this work was specified have not been answered, ' +
       'and they touch areas this release changed.'
     );
   }
+  if (failingCount) return 'Tests covering areas this release changed are failing.';
   if (!matchedCount) {
     return 'Nothing in the record covers the areas this release changed, so no questions could be checked.';
   }
@@ -131,9 +143,11 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
   }
 
   const assessment = assessReleaseRisk(store, { changed, releaseRef: opts.releaseRef });
-  const signals = assessment.signals.map((s) => s.detail);
-  const overriding = !!opts.overrideReason && signals.length > 0;
-  const shippable = signals.length === 0 || overriding;
+  const signals = assessment.signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail] : []));
+  const failingTests = assessment.signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
+  const blocked = signals.length + failingTests.length > 0;
+  const overriding = !!opts.overrideReason && blocked;
+  const shippable = !blocked || overriding;
 
   const result: GateResult = {
     shippable,
@@ -145,6 +159,8 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
       sample: assessment.matched.unmatched.slice(0, UNMATCHED_SAMPLE),
     },
     signals,
+    failingTests,
+    flakyTests: assessment.flaky,
     recorded: null,
   };
 
@@ -156,12 +172,20 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
   // cites has to name artifacts that exist. The live findings are the evidence for a hold;
   // the matched requirements are what a clean ship is asserting about. Both come from the
   // store, so neither can be an id recordVerdict rejects.
-  const cites = [...new Set([...signals.map((s) => s.findingId), ...assessment.matched.requirements])];
+  const cites = [
+    ...new Set([
+      ...signals.map((s) => s.findingId),
+      ...failingTests.map((t) => t.testRunId),
+      ...assessment.matched.requirements,
+    ]),
+  ];
 
   const recorded = recordVerdict(store, {
     releaseRef: opts.releaseRef,
     verdict,
-    reason: opts.reason?.trim() || defaultReason(signals.length, assessment.matched.requirements.length),
+    reason:
+      opts.reason?.trim() ||
+      defaultReason(signals.length, assessment.matched.requirements.length, failingTests.length),
     cites,
     changed,
     // Only when it overrides something. recordVerdict rejects an override alongside a hold,
@@ -220,6 +244,29 @@ export function renderSummary(r: GateResult): string {
     lines.push('');
   } else {
     lines.push('No unanswered questions on the areas this change touches.');
+    lines.push('');
+  }
+
+  if (r.failingTests.length) {
+    const n = r.failingTests.length;
+    lines.push(
+      `**${n} failing test${n === 1 ? '' : 's'} on areas this change touches**` + (r.shippable ? ' — overridden.' : ''),
+    );
+    lines.push('');
+    for (const t of r.failingTests) {
+      const flaky = t.flaky ? ', flaky: it also passed on the same commit' : '';
+      lines.push(bullet(`${t.sourceRef ?? 'no reference'} — ${t.name} (${t.status}${flaky})`));
+      if (t.message) lines.push(`  > ${t.message.split('\n')[0]}`);
+    }
+    lines.push('');
+  }
+
+  const failingCases = new Set(r.failingTests.map((t) => t.testCaseId));
+  const flakyPassing = r.flakyTests.filter((t) => !failingCases.has(t.testCaseId));
+  if (flakyPassing.length) {
+    const n = flakyPassing.length;
+    lines.push(`**${n} flaky test${n === 1 ? '' : 's'}** — passing now, but failed and passed on the same commit:`);
+    for (const t of flakyPassing) lines.push(bullet(t.name));
     lines.push('');
   }
 
