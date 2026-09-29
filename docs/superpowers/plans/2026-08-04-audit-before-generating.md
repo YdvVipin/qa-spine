@@ -333,7 +333,7 @@ way bypasses it.
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/qa-spine
+cd ~/projects/qa-spine
 git add src/server.ts tests/audit-cli.test.ts README.md
 git commit -m "feat(cli): expose audit-requirement and audit-submit"
 ```
@@ -355,7 +355,7 @@ git commit -m "feat(cli): expose audit-requirement and audit-submit"
 - [ ] **Step 1: Create the branch**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git checkout -b audit-before-generating
 git status --porcelain | wc -l   # the user's dirty files come along; leave them alone
 ```
@@ -647,7 +647,7 @@ Expected: PASS — `providers.py` gained keys but changed none. If either was al
 - [ ] **Step 8: Commit — exact paths only**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git add core/ai/providers.py core/agents/ambiguity_auditor.py tests/test_ambiguity_auditor.py
 git commit -m "feat(audit): add the audit model purpose and the ambiguity auditor"
 ```
@@ -833,7 +833,7 @@ Expected: PASS — all existing tests plus the 6 new ones. The existing `record`
 - [ ] **Step 6: Commit — exact paths only**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git add core/trace/spine_client.py tests/test_spine_client.py
 git commit -m "feat(trace): add audit_requirement and audit_submit to the spine client"
 ```
@@ -1099,7 +1099,7 @@ Expected: PASS. `start_from_ticket` gained keys in its return dict and one call;
 - [ ] **Step 7: Commit — exact paths only**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git add core/orchestration/loop_a.py tests/test_spine_instrumentation.py
 git commit -m "feat(audit): audit a ticket before its tests are generated"
 ```

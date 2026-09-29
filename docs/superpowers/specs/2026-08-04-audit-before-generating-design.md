@@ -3,8 +3,8 @@
 **Status:** design approved, not implemented
 **Date:** 2026-08-04
 **Spans two repos:**
-- `qa-spine` — `/home/vipin-yadav/Desktop/MLProjects/qa-spine`, TypeScript, `main` at `15e12f2`
-- `QAAutomationAIEnabler` (QAAE) — `/home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler`, Python, `master` at `616349b`
+- `qa-spine` — `~/projects/qa-spine`, TypeScript, `main` at `15e12f2`
+- `QAAutomationAIEnabler` (QAAE) — `~/projects/QAAutomationAIEnabler`, Python, `master` at `616349b`
 
 **Part 2** — the release gate that makes these questions expensive to ignore — is a separate spec
 and a separate implementation cycle. This one creates the questions; that one gives them teeth.

@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Two repos.** qa-spine at `/home/vipin-yadav/Desktop/MLProjects/qa-spine`; QAAE at `/home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler`. Never commit across both in one command.
+- **Two repos.** qa-spine at `~/projects/qa-spine`; QAAE at `~/projects/QAAutomationAIEnabler`. Never commit across both in one command.
 - **QAAE's working tree is dirty and it is NOT yours.** 28 modified + 15 untracked files of the user's in-progress work. **Every `git add` must name exact file paths.** Never `git add -A`, `git add .`, `git add -u`, or `git commit -a`. Committing the user's uncommitted work is the worst outcome available in this plan.
 - **Work on a branch in both repos.** Never commit to `main` (qa-spine) or `master` (QAAE).
 - **No new dependencies in either repo.** qa-spine: only `@modelcontextprotocol/sdk` and `zod`. QAAE: standard library only for the new module.
@@ -52,7 +52,7 @@
 The `spine-integration` branch already exists in qa-spine — the plan itself was committed on it.
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/qa-spine
+cd ~/projects/qa-spine
 git branch --show-current   # must print: spine-integration
 ```
 
@@ -191,7 +191,7 @@ Expected: all tests PASS (75 existing + 4 new = 79), `tsc` clean
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/qa-spine
+cd ~/projects/qa-spine
 git add src/server.ts tests/record-cli.test.ts
 git commit -m "feat(cli): add a record subcommand so other languages can append"
 ```
@@ -215,7 +215,7 @@ git commit -m "feat(cli): add a record subcommand so other languages can append"
 - [ ] **Step 1: Create the branch**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git checkout -b spine-integration
 git status --porcelain | head -5   # the user's dirty files come along; leave them alone
 ```
@@ -520,7 +520,7 @@ Expected: PASS, 10 tests
 - [ ] **Step 6: Commit — exact paths only**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git add core/trace/__init__.py core/trace/spine_client.py tests/test_spine_client.py
 git commit -m "feat(trace): add a best-effort qa-spine client"
 ```
@@ -740,7 +740,7 @@ Expected: PASS — the existing Loop A tests must be unaffected, since no behavi
 - [ ] **Step 8: Commit — exact paths only**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git add core/orchestration/loop_a.py tests/test_spine_instrumentation.py
 git commit -m "feat(trace): record the requirement and the generated test case"
 ```
@@ -937,7 +937,7 @@ Expected: PASS
 - [ ] **Step 7: Commit — exact paths only**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git add core/orchestration/loop_a.py tests/test_spine_instrumentation.py
 git commit -m "feat(trace): record runs and heals, superseding the test they replace"
 ```
@@ -1104,8 +1104,8 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run the demo for real**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/qa-spine && npm run build
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/qa-spine && npm run build
+cd ~/projects/QAAutomationAIEnabler
 QA_SPINE_DIR=../qa-spine QA_SPINE_DB=/tmp/demo-spine.db python scripts/spine_demo.py
 ```
 
@@ -1114,7 +1114,7 @@ Expected: five artifact ids printed, exit 0.
 Then confirm the chain is real:
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/qa-spine
+cd ~/projects/qa-spine
 QA_SPINE_DB=/tmp/demo-spine.db node -e "
 const { TraceStore } = await import('./src/trace/store.ts');
 const s = new TraceStore('/tmp/demo-spine.db');
@@ -1127,7 +1127,7 @@ Expected: five artifacts, two of them `ai`.
 - [ ] **Step 5: Run the e2e test against the real spine**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 QA_SPINE_DIR=../qa-spine python -m pytest tests/test_spine_instrumentation.py -q
 ```
 
@@ -1161,7 +1161,7 @@ Demo: `scripts/spine_demo.py`.
 - [ ] **Step 7: Commit — exact paths only**
 
 ```bash
-cd /home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler
+cd ~/projects/QAAutomationAIEnabler
 git add scripts/spine_demo.py tests/test_spine_instrumentation.py \
         docs/superpowers/specs/2026-07-31-spine-integration-design.md
 git commit -m "feat(trace): add the spine demo and an end-to-end check"

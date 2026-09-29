@@ -8,3 +8,6 @@ dist/
 
 # Scratch workspace for subagent-driven plan execution.
 .superpowers/
+
+# local agent config (machine-specific paths)
+.claude/

@@ -3,8 +3,8 @@
 **Status:** design approved, not implemented
 **Date:** 2026-07-31
 **Spans two repos:**
-- `qa-spine` (this one) — `/home/vipin-yadav/Desktop/MLProjects/qa-spine`, TypeScript, at `f93ac98`
-- `QAAutomationAIEnabler` (QAAE) — `/home/vipin-yadav/Desktop/MLProjects/QAAutomationAIEnabler`, Python, at `72f1579`
+- `qa-spine` (this one) — `~/projects/qa-spine`, TypeScript, at `f93ac98`
+- `QAAutomationAIEnabler` (QAAE) — `~/projects/QAAutomationAIEnabler`, Python, at `72f1579`
 
 This spec lives in qa-spine because that is the session's working repo. The larger share of the
 work lands in QAAE; a pointer to this file goes in QAAE's `docs/superpowers/specs/` during
