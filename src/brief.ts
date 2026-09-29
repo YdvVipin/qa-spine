@@ -1,5 +1,6 @@
 import type { TraceStore } from './trace/store.ts';
 import type { Artifact } from './trace/schema.ts';
+import { isFlaky } from './release.ts';
 
 /**
  * Renders one recorded verdict as a self-contained page for a non-technical reader.
@@ -137,6 +138,39 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const approved = p.approvedBy ? ` · Approved by ${esc(p.approvedBy)}` : '';
   const who = `${author}${approved} · ${reviewNote}`;
 
+  // The tests that were failing at decision time. Verdicts from before test results were
+  // signals have no `liveTestRuns` and render no section, exactly as they did then.
+  // Flakiness is judged from the runs recorded up to the verdict, not after: a rerun
+  // tomorrow must not change what this page says about today's decision.
+  const liveTestRuns: string[] = Array.isArray(c.liveTestRuns) ? [...new Set<string>(c.liveTestRuns)] : [];
+  const failingTests = liveTestRuns.flatMap((runId) => {
+    const run = store.get(runId);
+    const tcId = run && store.edgesFrom(run.id).find((e) => e.relation === 'verifies')?.toArtifactId;
+    const tc = tcId ? store.get(tcId) : undefined;
+    if (!run || !tc) return [];
+    const history = store.linkedFrom(tc.id, 'verifies', 'test_run').filter((r) => r.createdAt <= verdict.createdAt);
+    return [{ run, name: String(tc.content.name ?? 'an unnamed test'), flaky: isFlaky(history) }];
+  });
+  const testBlocks = failingTests
+    .map(({ run, name, flaky }) => {
+      const message = String(run.content.message ?? '').trim();
+      return `
+      <div class="q">
+        <div class="q-when">Last run on ${esc(longDate(run.createdAt))}${run.content.status === 'error' ? ' · could not run to completion' : ''}</div>
+        <div class="q-ask">${esc(name)}</div>
+        ${message ? `<p class="q-quote">${esc(message)}</p>` : ''}
+        ${flaky ? '<p class="q-note">This test also passed on the same version of the code, so it may be unreliable rather than a real fault.</p>' : ''}
+      </div>`;
+    })
+    .join('');
+
+  const overrodeQuestions = !override || !Array.isArray(override.testRuns) || (Array.isArray(override.findings) && override.findings.length > 0);
+  const overrodeTests = Array.isArray(override?.testRuns) && override.testRuns.length > 0;
+  const overrideTension = [
+    ...(overrodeQuestions ? ['open questions existed'] : []),
+    ...(overrodeTests ? ['tests were failing'] : []),
+  ].join(' and ');
+
   const questionBlocks = questions
     .map((f) => {
       const quote = String(f.content.quote ?? '').trim();
@@ -180,6 +214,8 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
       : ''
   }
 
+  ${failingTests.length ? `<h2>Tests that were failing when this decision was made</h2>${testBlocks}` : ''}
+
   ${
     changed.length
       ? // A heading with an empty list under it (e.g. a verdict recorded before `changed`
@@ -200,7 +236,7 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   ${
     override
       ? `<div class="override">
-    <strong>⚠ This release was cleared even though open questions existed.</strong>
+    <strong>⚠ This release was cleared even though ${overrideTension}.</strong>
     <p>Reason given at the time:</p>
     <p>"${esc(override.reason ?? '')}"</p>
   </div>`

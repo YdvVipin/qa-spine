@@ -541,3 +541,75 @@ test('M4: a human-written verdict states its review status on both branches', ()
   });
   assert.match(renderBrief(store, verdict.id), /Written by a person.*Later reviewed by a person/s);
 });
+
+/** A requirement covered by a test whose runs are given oldest first; no questions at all. */
+function seedFailingTest(store: TraceStore, runs: { status: string; commit?: string; message?: string }[]) {
+  const req = store.record({ type: 'requirement', sourceRef: 'PROJ-7', content: { text: 'r' }, provenance: human });
+  const tool = { producer: 'tool' as const, tool: 'qa-spine ingest-junit' };
+  const tc = store.record({
+    type: 'test_case',
+    sourceRef: 'junit:refunds::refund email is sent',
+    content: { name: 'refund email is sent', classname: 'refunds' },
+    provenance: tool,
+    links: [{ to: req.id, relation: 'covers' }],
+  });
+  for (const content of runs) {
+    store.record({ type: 'test_run', sourceRef: 'ci/3', content, provenance: tool, links: [{ to: tc.id, relation: 'verifies' }] });
+  }
+  return { req, tc };
+}
+
+test('a hold over a failing test lists the test and its message, with no ids', () => {
+  const store = new TraceStore(':memory:');
+  const { tc } = seedFailingTest(store, [{ status: 'failed', message: 'expected 1 email, got 0' }]);
+  const v = recordVerdict(store, {
+    releaseRef: 'r1', verdict: 'hold', reason: 'A refund test is failing.', cites: [], changed: ['PROJ-7'], provenance: human,
+  });
+  const html = body(renderBrief(store, v.id));
+  assert.match(html, /Tests that were failing when this decision was made/);
+  assert.match(html, /refund email is sent/);
+  assert.match(html, /expected 1 email, got 0/);
+  assert.doesNotMatch(html, /flaky|also passed/i);
+  assert.ok(!html.includes(tc.id) && !html.includes(String(v.content.liveTestRuns)));
+});
+
+test('a flaky failing test says it also passed on the same code', () => {
+  const store = new TraceStore(':memory:');
+  seedFailingTest(store, [{ status: 'passed', commit: 'c1' }, { status: 'failed', commit: 'c1' }]);
+  const v = recordVerdict(store, {
+    releaseRef: 'r1', verdict: 'hold', reason: 'A refund test is failing.', cites: [], changed: ['PROJ-7'], provenance: human,
+  });
+  assert.match(renderBrief(store, v.id), /also passed on the same version of the code/);
+});
+
+test('a verdict with no failing tests renders no tests section', () => {
+  const store = new TraceStore(':memory:');
+  const { verdict } = seedBrief(store);
+  assert.doesNotMatch(renderBrief(store, verdict.id), /Tests that were failing/);
+});
+
+test('an override of only a failing test says so, not that questions were open', () => {
+  const store = new TraceStore(':memory:');
+  seedFailingTest(store, [{ status: 'failed' }]);
+  const v = recordVerdict(store, {
+    releaseRef: 'r1', verdict: 'ship', reason: 'Hotfix.', cites: [], changed: ['PROJ-7'],
+    override: { reason: 'The email provider sandbox is down.' }, provenance: { ...human, approvedBy: 'a.rivera' },
+  });
+  const html = renderBrief(store, v.id);
+  assert.match(html, /cleared even though tests were failing/);
+  assert.doesNotMatch(html, /even though open questions existed/);
+});
+
+test('a rerun recorded after the decision does not make the brief call the test flaky', async () => {
+  const store = new TraceStore(':memory:');
+  const { tc } = seedFailingTest(store, [{ status: 'failed', commit: 'c1' }]);
+  const v = recordVerdict(store, {
+    releaseRef: 'r1', verdict: 'hold', reason: 'A refund test is failing.', cites: [], changed: ['PROJ-7'], provenance: human,
+  });
+  await new Promise((r) => setTimeout(r, 5)); // a later millisecond than the verdict
+  store.record({
+    type: 'test_run', content: { status: 'passed', commit: 'c1' },
+    provenance: { producer: 'tool', tool: 'qa-spine ingest-junit' }, links: [{ to: tc.id, relation: 'verifies' }],
+  });
+  assert.doesNotMatch(renderBrief(store, v.id), /also passed/);
+});
