@@ -1,0 +1,537 @@
+<title>qa-spine, explained — a plain-language briefing</title>
+<style>
+  :root {
+    --ground: #F5F7F6;
+    --card: #FDFEFD;
+    --ink: #16232B;
+    --muted: #5C6B70;
+    --accent: #0F766E;
+    --accent-soft: #E3EEEC;
+    --hold: #B4232A;
+    --hold-soft: #F7E9E9;
+    --ship: #2E7D46;
+    --ship-soft: #E7F1E9;
+    --line: #D8E0DE;
+    --code-bg: #16232B;
+    --code-ink: #D9E4E1;
+    --code-accent: #7FD1C7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #101619;
+      --card: #161E22;
+      --ink: #E6ECEA;
+      --muted: #93A3A8;
+      --accent: #4FBDB2;
+      --accent-soft: #16302E;
+      --hold: #E2606A;
+      --hold-soft: #33191C;
+      --ship: #5CBB7B;
+      --ship-soft: #16281C;
+      --line: #263237;
+      --code-bg: #0B1013;
+      --code-ink: #C9D6D3;
+      --code-accent: #6FCFC3;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101619;
+    --card: #161E22;
+    --ink: #E6ECEA;
+    --muted: #93A3A8;
+    --accent: #4FBDB2;
+    --accent-soft: #16302E;
+    --hold: #E2606A;
+    --hold-soft: #33191C;
+    --ship: #5CBB7B;
+    --ship-soft: #16281C;
+    --line: #263237;
+    --code-bg: #0B1013;
+    --code-ink: #C9D6D3;
+    --code-accent: #6FCFC3;
+  }
+  :root[data-theme="light"] {
+    --ground: #F5F7F6;
+    --card: #FDFEFD;
+    --ink: #16232B;
+    --muted: #5C6B70;
+    --accent: #0F766E;
+    --accent-soft: #E3EEEC;
+    --hold: #B4232A;
+    --hold-soft: #F7E9E9;
+    --ship: #2E7D46;
+    --ship-soft: #E7F1E9;
+    --line: #D8E0DE;
+    --code-bg: #16232B;
+    --code-ink: #D9E4E1;
+    --code-accent: #7FD1C7;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.65;
+    margin: 0;
+    font-size: 1.0rem;
+  }
+  .page {
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: 3rem 1.25rem 5rem;
+  }
+  h1, h2, h3 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    line-height: 1.2;
+    text-wrap: balance;
+    margin: 0;
+  }
+  h1 { font-size: 2.4rem; font-weight: 600; }
+  h2 { font-size: 1.55rem; font-weight: 600; margin-top: 0; }
+  h3 { font-size: 1.15rem; font-weight: 600; }
+  p { margin: 0.9rem 0; max-width: 68ch; }
+  section { margin-top: 3.5rem; }
+
+  .eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+  }
+  .dek {
+    font-size: 1.15rem;
+    color: var(--muted);
+    margin-top: 1rem;
+    max-width: 60ch;
+  }
+  .header-rule {
+    height: 3px;
+    background: var(--accent);
+    width: 4rem;
+    margin-top: 1.75rem;
+    border-radius: 2px;
+  }
+
+  .oneliner {
+    background: var(--accent-soft);
+    border-left: 4px solid var(--accent);
+    padding: 1.1rem 1.3rem;
+    margin: 1.5rem 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 1.08rem;
+  }
+  .oneliner p { margin: 0; }
+
+  /* chain diagram */
+  .chain-scroll { overflow-x: auto; margin: 1.75rem 0; padding-bottom: 0.5rem; }
+  .chain {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    min-width: 700px;
+  }
+  .chain-node {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 0.8rem 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .chain-node .step-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .chain-node .step-name { font-weight: 600; font-size: 0.95rem; }
+  .chain-node .step-eg { font-size: 0.82rem; color: var(--muted); line-height: 1.45; }
+  .chain-arrow {
+    display: flex;
+    align-items: center;
+    padding: 0 0.35rem;
+    color: var(--muted);
+    font-size: 1.1rem;
+    flex: none;
+  }
+  .chain-node.decision { border-top-color: var(--hold); }
+  .chain-node.decision .step-label { color: var(--hold); }
+
+  /* promises */
+  .promises { display: flex; flex-direction: column; gap: 1rem; margin-top: 1.5rem; }
+  .promise {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.1rem 1.3rem;
+  }
+  .promise h3 { margin-bottom: 0.35rem; }
+  .promise p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+  .promise strong { color: var(--ink); }
+
+  /* timeline (the spine motif) */
+  .timeline {
+    margin: 2rem 0 0.5rem;
+    padding-left: 1.6rem;
+    border-left: 3px solid var(--accent);
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+  .moment { position: relative; }
+  .moment::before {
+    content: "";
+    position: absolute;
+    left: calc(-1.6rem - 8.5px);
+    top: 0.35rem;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--ground);
+    border: 3px solid var(--accent);
+  }
+  .moment.bad::before { border-color: var(--hold); }
+  .moment .when {
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .moment p { margin: 0.25rem 0 0; }
+  .verdict-stamp {
+    display: inline-block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    font-size: 0.85rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    border: 2px solid var(--hold);
+    color: var(--hold);
+    background: var(--hold-soft);
+    transform: rotate(-1.5deg);
+  }
+  .verdict-stamp.ship { border-color: var(--ship); color: var(--ship); background: var(--ship-soft); }
+
+  /* terminal cards */
+  .term {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 8px;
+    margin: 1.25rem 0;
+    overflow: hidden;
+  }
+  .term .term-bar {
+    padding: 0.45rem 1rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--code-accent);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-weight: 600;
+  }
+  .term pre {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.84rem;
+    line-height: 1.6;
+  }
+  .term .c { color: #7A8C91; }
+
+  /* numbered steps — real sequences only */
+  .steps { counter-reset: step; list-style: none; padding: 0; margin: 1.5rem 0 0; display: flex; flex-direction: column; gap: 1.1rem; }
+  .steps li { position: relative; padding-left: 3rem; max-width: 68ch; }
+  .steps li::before {
+    counter-increment: step;
+    content: counter(step);
+    position: absolute;
+    left: 0; top: 0.05rem;
+    width: 2rem; height: 2rem;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .steps li strong { display: block; margin-bottom: 0.15rem; }
+  .steps li p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.95rem; }
+
+  /* FAQ */
+  details {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0;
+    margin-top: 0.75rem;
+  }
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 0.9rem 1.2rem;
+    list-style-position: inside;
+  }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+  details p { padding: 0 1.2rem 1rem; margin: 0; color: var(--muted); }
+  details p strong { color: var(--ink); }
+
+  /* glossary */
+  .glossary-scroll { overflow-x: auto; margin-top: 1.5rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 540px; }
+  th, td { text-align: left; padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700;
+  }
+  td:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; white-space: nowrap; color: var(--accent); font-weight: 600; }
+  td { font-size: 0.93rem; }
+  td:last-child { color: var(--muted); }
+
+  .note {
+    font-size: 0.9rem;
+    color: var(--muted);
+    border-top: 1px solid var(--line);
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Product briefing · August 2026 · For non-technical readers</div>
+    <h1>qa-spine, explained</h1>
+    <p class="dek">What we built, what it promises, how a customer starts using it, and how to prepare a demo — written so you don't need to be an engineer to follow any of it.</p>
+    <div class="header-rule"></div>
+  </header>
+
+  <section>
+    <h2>The problem we solve</h2>
+    <p>Software teams everywhere now use AI to do quality work: the AI reads a feature request, writes the checks, and flags problems. That saves enormous time — and creates a new problem nobody had five years ago:</p>
+    <p><em>When something goes wrong, can you prove what the AI did, what it was told, and whether any human ever looked at its work?</em></p>
+    <p>Today, for most teams, the honest answer is no. The AI's work is scattered across chat windows and files. Nothing connects "what we asked for" to "what we checked" to "why we decided to release." And regulators, auditors, and customers are starting to ask for exactly that connection.</p>
+  </section>
+
+  <section>
+    <h2>What we built</h2>
+    <div class="oneliner">
+      <p><strong>qa-spine is a tamper-proof logbook for software quality.</strong> Like a flight recorder on an aircraft: it doesn't fly the plane, it makes an unerasable record of everything that happened — so that afterwards, anyone can reconstruct exactly what was known, and when.</p>
+    </div>
+    <p>Every entry in the logbook is linked to the one before it, forming a chain from the original ask all the way to the final release decision:</p>
+
+    <div class="chain-scroll">
+      <div class="chain">
+        <div class="chain-node">
+          <span class="step-label">Link 1</span>
+          <span class="step-name">The ask</span>
+          <span class="step-eg">What the business requested, in its original words.</span>
+        </div>
+        <div class="chain-arrow">→</div>
+        <div class="chain-node">
+          <span class="step-label">Link 2</span>
+          <span class="step-name">The questions</span>
+          <span class="step-eg">Unclear parts the AI flagged before any work began.</span>
+        </div>
+        <div class="chain-arrow">→</div>
+        <div class="chain-node">
+          <span class="step-label">Link 3</span>
+          <span class="step-name">The checks</span>
+          <span class="step-eg">The tests written to verify the feature works.</span>
+        </div>
+        <div class="chain-arrow">→</div>
+        <div class="chain-node">
+          <span class="step-label">Link 4</span>
+          <span class="step-name">The results</span>
+          <span class="step-eg">Whether each check passed or failed, and when.</span>
+        </div>
+        <div class="chain-arrow">→</div>
+        <div class="chain-node decision">
+          <span class="step-label">Link 5</span>
+          <span class="step-name">The decision</span>
+          <span class="step-eg">Ship or hold — with the reason, on the record.</span>
+        </div>
+      </div>
+    </div>
+
+    <p>One important thing qa-spine does <em>not</em> do: it never does the thinking itself. Your team's AI assistant does the analysis; qa-spine checks the work and writes it into the logbook. That's a feature, not a gap — it means the product works with any AI, and none of your company's data is ever sent anywhere. Everything stays on your own machines.</p>
+  </section>
+
+  <section>
+    <h2>Five promises it keeps</h2>
+    <p>These aren't aspirations — each one is enforced by the software itself:</p>
+    <div class="promises">
+      <div class="promise">
+        <h3>Nothing can be erased</h3>
+        <p>The logbook only ever grows, like a bank ledger. A mistake is corrected by adding a correction — <strong>the original stays visible</strong>, along with the fact that it was corrected. Even someone with direct access to the files can't quietly rewrite history.</p>
+      </div>
+      <div class="promise">
+        <h3>Every AI entry is signed</h3>
+        <p>Any entry made by an AI must state <strong>which AI made it and which version of the instructions</strong> it was following. An unsigned AI entry is refused at the door.</p>
+      </div>
+      <div class="promise">
+        <h3>The AI cannot misquote</h3>
+        <p>When the AI flags a problem in a request, it must quote the request <strong>word for word</strong>. If the quote doesn't actually appear in the original text, the entire submission is rejected. Made-up evidence cannot enter the record.</p>
+      </div>
+      <div class="promise">
+        <h3>No quiet ship</h3>
+        <p>If a known question is still unanswered, the system <strong>refuses to record a "ship" decision</strong> — unless a person explicitly overrides it with a written reason. That override is stamped on the record permanently, and it's the first thing anyone reviewing the release will see.</p>
+      </div>
+      <div class="promise">
+        <h3>Plain language, enforced</h3>
+        <p>The reason attached to a release decision must be readable by a project manager. If it's written in internal engineering shorthand, the system <strong>asks for a rewrite</strong>. The release summary anyone receives is guaranteed readable.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The story you show in a demo</h2>
+    <p>The product ships with a ready-made example — a small story, and a persuasive one. Here's what the audience sees:</p>
+
+    <div class="timeline">
+      <div class="moment">
+        <span class="when">The ask arrives</span>
+        <p>A feature request comes in: <em>"Refunds must be processed <strong>quickly</strong> and the customer notified <strong>appropriately</strong>."</em> It sounds fine. It isn't.</p>
+      </div>
+      <div class="moment">
+        <span class="when">The AI raises its hand</span>
+        <p>Before anything is built, the AI flags two problems. <em>"Quickly"</em> — how quick is quick? Nobody can test a feeling. And <em>"notified appropriately"</em> — what happens if the notification <strong>fails to send</strong>? The request doesn't say.</p>
+      </div>
+      <div class="moment">
+        <span class="when">One question gets answered</span>
+        <p>The team defines "quickly" as <em>within 3 business days</em> and writes a check for it. That question is settled, on the record.</p>
+      </div>
+      <div class="moment bad">
+        <span class="when">One question gets ignored</span>
+        <p>The notification-failure question is never answered. Weeks later, the refund check fails in exactly that way: <em>"timed out waiting for notification."</em> The ignored question predicted the failure.</p>
+      </div>
+      <div class="moment bad">
+        <span class="when">Release day</span>
+        <p>The verdict: <span class="verdict-stamp">HOLD</span> &nbsp;— and the record shows precisely why: a known ambiguity, flagged on day one, never resolved, now failing. Who knew what, and when, is one click away.</p>
+      </div>
+    </div>
+
+    <p>That's the whole pitch in ninety seconds: <strong>a vague sentence became a real failure, and the logbook caught it at the gate — with receipts.</strong></p>
+
+    <h3 style="margin-top:2rem;">Running it (three lines, copy and paste)</h3>
+    <p>Open a terminal in the project folder and paste these. The first prepares the software, the second writes the example story into a fresh demo logbook, the third opens the viewer in your browser:</p>
+    <div class="term">
+      <div class="term-bar">Terminal — start the demo</div>
+      <pre>npm run build
+QA_SPINE_DB=demo/trace.db node examples/seed-demo.ts
+QA_SPINE_DB=demo/trace.db npm run inspect   <span class="c"># then open http://127.0.0.1:4700</span></pre>
+    </div>
+    <p>In the viewer, click <strong>Chain</strong> to see the story left-to-right (the unanswered question glows red), click any entry to see the AI's quote highlighted inside the original request, and use the <strong>Queue</strong> view to answer the open question live — the red clears in front of the audience. Finish by generating the one-page release summary (copy the decision's ID from the list view):</p>
+    <div class="term">
+      <div class="term-bar">Terminal — the executive summary page</div>
+      <pre>QA_SPINE_DB=demo/trace.db node dist/server.js brief &lt;decision-id&gt; &gt; brief.html</pre>
+    </div>
+    <p>That produces a single, self-contained web page saying HOLD and why — the thing you'd actually email to a project head. End the demo on it.</p>
+  </section>
+
+  <section>
+    <h2>How a customer comes on board</h2>
+    <p>The journey is deliberately small. There is no account to create, no data to upload to us, no AI subscription to buy from us:</p>
+    <ol class="steps">
+      <li>
+        <strong>Install it on their machine</strong>
+        <p>Today: a five-minute setup by one engineer (it needs only Node.js, a standard free tool). On the near-term roadmap: a single command, <code>npx qa-spine</code>, with no setup at all.</p>
+      </li>
+      <li>
+        <strong>Connect their AI assistant</strong>
+        <p>One line tells the customer's existing AI assistant (Claude, or any compatible tool) that the logbook exists. From then on, the assistant records its QA work there automatically.</p>
+      </li>
+      <li>
+        <strong>Load their real requirements</strong>
+        <p>An included importer pulls actual tickets from Jira, the tracking tool most teams already use — so within the first hour they see <em>their own</em> feature requests being questioned, not our examples.</p>
+      </li>
+      <li>
+        <strong>The team answers questions</strong>
+        <p>The viewer shows every unanswered question the AI raised. People answer them; each answer permanently retires its question. An empty queue is the goal.</p>
+      </li>
+      <li>
+        <strong>Release day changes</strong>
+        <p>Before shipping, they ask the logbook: "anything still open on what this release touches?" The one-page summary — ship or hold, and why — goes to whoever signs off. That page is the habit that makes the product sticky.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Need different demo data?</h2>
+    <p>The built-in refund story fits most audiences, but if you're demoing to, say, a bank, a healthcare company, or your own team, a story in <em>their</em> world lands harder. Three ways to get one, easiest first:</p>
+    <ol class="steps">
+      <li>
+        <strong>Ask the AI assistant to write you a new story</strong>
+        <p>The product is built to be driven by an AI assistant — so use that. Tell Claude (in this project): <em>"Copy examples/seed-demo.ts to examples/seed-banking.ts and rewrite the story for a loan-approval feature — keep the same structure."</em> Then run it exactly like the original, pointing at a fresh file. This is the recommended route for a non-engineer.</p>
+      </li>
+      <li>
+        <strong>Edit the story file yourself</strong>
+        <p>The file <code>examples/seed-demo.ts</code> contains the story as ordinary English sentences inside quotation marks — the request, the two problems, the failure message, the verdict reason. Change only the words inside the quotes. One rule to respect: the short quoted phrases (like <em>"quickly"</em>) must appear word-for-word inside your rewritten request sentence — that's the honesty check doing its job, and it applies to you too.</p>
+      </li>
+      <li>
+        <strong>Use the customer's real tickets</strong>
+        <p>For the strongest demo of all, the Jira importer pulls their actual requirements, and the AI audits those live. Nothing is more convincing than the product finding a genuinely vague sentence in the prospect's own backlog.</p>
+      </li>
+    </ol>
+    <p>One habit to keep: always point demos at a fresh file (that's what <code>QA_SPINE_DB=demo/trace.db</code> does in every command above). It keeps demo material out of the real logbook — and since the logbook is deliberately unerasable, you can't tidy it up afterwards.</p>
+  </section>
+
+  <section>
+    <h2>Honest questions, honest answers</h2>
+    <details>
+      <summary>Does this replace our QA people?</summary>
+      <p>No — it makes their judgment visible and durable. The AI does the tedious volume (reading every requirement, flagging every vagueness); people decide what's acceptable. The logbook records both, and keeps them distinguishable forever.</p>
+    </details>
+    <details>
+      <summary>Does it send our data to an AI company?</summary>
+      <p><strong>Never.</strong> qa-spine itself contacts no AI and no internet service. Your own AI assistant — whichever one you already use and trust — does the reading, under your existing agreement with that vendor. qa-spine only verifies and records the results, locally.</p>
+    </details>
+    <details>
+      <summary>Can a clever AI cheat the system?</summary>
+      <p>It can't forge evidence (misquotes are rejected) and it can't ship quietly (overrides are stamped on the record). What it <em>could</em> do is answer its own questions — and we deliberately allow that, because the record always shows an AI answered, in a different color, signed. The product's philosophy is <strong>visibility rather than locks</strong>: nothing dishonest can happen invisibly. We say this to customers up front; it builds trust rather than costing it.</p>
+    </details>
+    <details>
+      <summary>Why would a customer pay for this?</summary>
+      <p>Two reasons. Day to day: fewer failures that trace back to a vague sentence nobody questioned. On audit day: regulators and enterprise buyers increasingly require proof of exactly this — which AI produced what, from which requirement, and which human approved it. That proof is expensive to reconstruct after the fact and nearly free to record as you go. qa-spine is the recorder.</p>
+    </details>
+    <details>
+      <summary>What does it cost to run?</summary>
+      <p>Almost nothing. No servers, no database licenses, no per-seat AI fees from us — it runs on the team's own machines and rides on the AI subscription they already have.</p>
+    </details>
+  </section>
+
+  <section>
+    <h2>Jargon translator</h2>
+    <p>You'll hear these words around the product. Here's what each one really means:</p>
+    <div class="glossary-scroll">
+      <table>
+        <tr><th>The word</th><th>What it actually means</th><th>Say it like this</th></tr>
+        <tr><td>artifact</td><td>One entry in the logbook — a request, a question, a check, a result, or a decision.</td><td>"an entry"</td></tr>
+        <tr><td>requirement</td><td>The original ask: what the business wants built, in its own words.</td><td>"the ask"</td></tr>
+        <tr><td>finding</td><td>A specific problem the AI flagged in an ask — always with a word-for-word quote as evidence.</td><td>"a flagged question"</td></tr>
+        <tr><td>provenance</td><td>The signature on an entry: who or what made it, and with which AI and instructions.</td><td>"the signature"</td></tr>
+        <tr><td>verdict</td><td>The recorded ship-or-hold decision, with its reason.</td><td>"the decision"</td></tr>
+        <tr><td>the Inspector</td><td>The built-in viewer where a person reads the logbook and answers open questions.</td><td>"the viewer"</td></tr>
+        <tr><td>rubric</td><td>The published checklist of what counts as a problem — versioned, so you can tell whether editing it helped.</td><td>"the checklist"</td></tr>
+        <tr><td>the brief</td><td>The one-page, plain-English release summary generated from a decision.</td><td>"the summary page"</td></tr>
+        <tr><td>MCP</td><td>The industry-standard plug that lets any AI assistant connect to tools like this one.</td><td>"the connector standard"</td></tr>
+        <tr><td>append-only</td><td>Entries can be added but never edited or deleted — corrections are new entries.</td><td>"unerasable"</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <p class="note">qa-spine · plain-language briefing · prepared August 2026. The technical companion documents are README.md and PROJECT_STATUS.md in the project folder.</p>
+
+</div>
