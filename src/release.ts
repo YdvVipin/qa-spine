@@ -5,27 +5,65 @@ const INSTRUCTIONS =
   'Write a one-page release brief, then record it with release_submit. Cite an artifact id ' +
   'for every claim you make and never invent one. Each signal is blocking: a `ship` verdict ' +
   'is rejected while any signal is present unless you pass an explicit override with a ' +
-  'reason. `context` is unscored evidence — report failing test runs you find there, and ' +
-  'report any `unmatched` ref, which is code that moved with no requirement covering it.';
+  'reason. A failing test whose `flaky` is true failed on a commit it also passed on: say so. ' +
+  '`context` is unscored evidence — report any `unmatched` ref, which is code that moved ' +
+  'with no requirement covering it, and any test listed in `flaky`.';
 
 /**
- * One unresolved requirement-stage question on something this release touched. Every signal
+ * Something on an area this release touched that blocks a ship: an unanswered
+ * requirement-stage question, or a covering test whose latest run failed. Every signal
  * blocks; there is deliberately no `blocking` field, because it would be true on all of them.
- * Add one when a second, non-blocking signal kind exists.
+ * Add one when a non-blocking signal kind exists.
  */
-export type RiskSignal = {
-  kind: 'unresolved_finding_on_changed_area';
-  artifacts: string[];
-  detail: {
-    findingId: string;
-    requirementId: string;
-    sourceRef: string | null;
-    category: unknown;
-    quote: unknown;
-    question: unknown;
-    confidence: unknown;
-  };
+export type RiskSignal =
+  | {
+      kind: 'unresolved_finding_on_changed_area';
+      artifacts: string[];
+      detail: {
+        findingId: string;
+        requirementId: string;
+        sourceRef: string | null;
+        category: unknown;
+        quote: unknown;
+        question: unknown;
+        confidence: unknown;
+      };
+    }
+  | {
+      kind: 'failing_test_on_changed_area';
+      artifacts: string[];
+      detail: FailingTest;
+    };
+
+export type FailingTest = {
+  testRunId: string;
+  testCaseId: string;
+  requirementId: string;
+  sourceRef: string | null;
+  name: string;
+  status: string;
+  message: string | null;
+  /** Failed on a commit it also passed on. Reported, never excused: it still blocks. */
+  flaky: boolean;
 };
+
+const BLOCKING_STATUS = new Set(['failed', 'error']);
+
+/** Flaky: ingest saw it pass and fail in one report, or two runs on one commit disagree. */
+export function isFlaky(runs: Artifact[]): boolean {
+  if (runs.some((r) => r.content.flaky === true)) return true;
+  const byCommit = new Map<string, Set<string>>();
+  for (const r of runs) {
+    const commit = r.content.commit;
+    if (typeof commit !== 'string' || !commit) continue;
+    const statuses = byCommit.get(commit) ?? new Set();
+    statuses.add(String(r.content.status));
+    byCommit.set(commit, statuses);
+  }
+  return [...byCommit.values()].some(
+    (s) => s.has('passed') && [...s].some((status) => BLOCKING_STATUS.has(status)),
+  );
+}
 
 /**
  * Makes no model call. Like `auditRequirement`, this is a librarian: it computes the one
@@ -70,7 +108,7 @@ export function assessReleaseRisk(
   // `requirement: null`, so a broken edge cannot hide work from the audit queue — the two
   // modules read the same shape differently on purpose. Upgrade: surface orphaned findings
   // here too, as unresolved context rather than a blocking signal.
-  const signals: RiskSignal[] = requirements.flatMap((req) =>
+  const findingSignals: RiskSignal[] = requirements.flatMap((req) =>
     store.openFindings(500, req.id).map((f) => ({
       kind: 'unresolved_finding_on_changed_area' as const,
       artifacts: [f.id, req.id],
@@ -85,6 +123,39 @@ export function assessReleaseRisk(
       },
     })),
   );
+
+  // The latest run decides: a later pass clears an earlier failure without superseding it.
+  // Every covering test counts, whoever recorded it, not only ingested ones.
+  const flaky: { testCaseId: string; requirementId: string; name: string }[] = [];
+  const testSignals: RiskSignal[] = requirements.flatMap((req) =>
+    store.linkedFrom(req.id, 'covers', 'test_case').flatMap((tc) => {
+      const runs = store.linkedFrom(tc.id, 'verifies', 'test_run');
+      const latest = runs[0];
+      if (!latest) return [];
+      const name = String(tc.content.name ?? tc.sourceRef ?? tc.id);
+      const unreliable = isFlaky(runs);
+      if (unreliable) flaky.push({ testCaseId: tc.id, requirementId: req.id, name });
+      const status = String(latest.content.status);
+      if (!BLOCKING_STATUS.has(status)) return [];
+      return [
+        {
+          kind: 'failing_test_on_changed_area' as const,
+          artifacts: [latest.id, tc.id, req.id],
+          detail: {
+            testRunId: latest.id,
+            testCaseId: tc.id,
+            requirementId: req.id,
+            sourceRef: req.sourceRef,
+            name,
+            status,
+            message: typeof latest.content.message === 'string' ? latest.content.message : null,
+            flaky: unreliable,
+          },
+        },
+      ];
+    }),
+  );
+  const signals = [...findingSignals, ...testSignals];
 
   // ponytail: merges whole chain() results, which on a densely linked store could be a large
   // subgraph. Bound the walk by depth if that becomes a problem.
@@ -103,6 +174,7 @@ export function assessReleaseRisk(
     release: { ref: input.releaseRef ?? null, changed },
     matched: { requirements: requirements.map((r) => r.id), unmatched },
     signals,
+    flaky,
     context: { nodes: [...nodes.values()], edges: [...edges.values()] },
     instructions: INSTRUCTIONS,
   };
@@ -212,13 +284,24 @@ export function recordVerdict(
   }
 
   const { release, signals, matched } = assessReleaseRisk(store, { changed: input.changed });
+  const liveFindings = signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail.findingId] : []));
+  const failing = signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
+  const liveTestRuns = [...new Set(failing.map((t) => t.testRunId))];
   if (input.verdict === 'ship' && signals.length && !overrideReason) {
+    const counts = [
+      ...(liveFindings.length ? [`${liveFindings.length} unresolved finding(s)`] : []),
+      ...(failing.length ? [`${failing.length} failing test(s)`] : []),
+    ];
     const named = signals
-      .map((s) => `${s.detail.findingId} (${s.detail.sourceRef ?? 'no sourceRef'})`)
+      .map((s) =>
+        s.kind === 'unresolved_finding_on_changed_area'
+          ? `${s.detail.findingId} (${s.detail.sourceRef ?? 'no sourceRef'})`
+          : `${s.detail.testRunId} (${s.detail.name}${s.detail.flaky ? ', flaky' : ''})`,
+      )
       .join(', ');
     throw new Error(
-      `cannot ship: ${signals.length} unresolved finding(s) on changed areas: ${named} — ` +
-        'answer them with audit_answer, or pass override with a reason',
+      `cannot ship: ${counts.join(' and ')} on changed areas: ${named} — ` +
+        'answer questions with audit_answer, fix or rerun failing tests, or pass override with a reason',
     );
   }
 
@@ -242,7 +325,7 @@ export function recordVerdict(
   // without knowing which question.
   const override =
     overrideReason && signals.length
-      ? { reason: overrideReason, findings: signals.map((s) => s.detail.findingId) }
+      ? { reason: overrideReason, findings: liveFindings, ...(liveTestRuns.length ? { testRuns: liveTestRuns } : {}) }
       : null;
 
   return store.record({
@@ -265,7 +348,10 @@ export function recordVerdict(
       // questions section even though one was live. `signals` is the one place that already
       // means "open right now" — see brief.ts for the read side and its fallback for
       // verdicts recorded before this field existed.
-      liveFindings: signals.map((s) => s.detail.findingId),
+      liveFindings,
+      // The failing runs that were latest at decision time, by the same reasoning as
+      // liveFindings: the brief must say what was failing *then*, not what fails now.
+      liveTestRuns,
     },
     provenance: input.provenance,
     links: cites.map((to) => ({ to, relation: 'derived_from' as const })),

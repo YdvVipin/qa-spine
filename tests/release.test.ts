@@ -79,11 +79,15 @@ function seedRelease(store: TraceStore) {
   return { req, resolved, open, testCase, run };
 }
 
+/** The seed also holds a failing run, which is its own signal kind; these tests are about findings. */
+const findingSignals = (r: ReturnType<typeof assessReleaseRisk>) =>
+  r.signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s] : []));
+
 test('assessReleaseRisk signals an unresolved finding on a changed requirement', () => {
   const store = new TraceStore(':memory:');
   const { req, open } = seedRelease(store);
 
-  const { signals } = assessReleaseRisk(store, { changed: ['PROJ-42'] });
+  const signals = findingSignals(assessReleaseRisk(store, { changed: ['PROJ-42'] }));
   assert.equal(signals.length, 1);
   assert.equal(signals[0].kind, 'unresolved_finding_on_changed_area');
   assert.equal(signals[0].detail.findingId, open.id);
@@ -96,7 +100,7 @@ test('assessReleaseRisk ignores a finding something has superseded', () => {
   const store = new TraceStore(':memory:');
   const { resolved } = seedRelease(store);
 
-  const { signals } = assessReleaseRisk(store, { changed: ['PROJ-42'] });
+  const signals = findingSignals(assessReleaseRisk(store, { changed: ['PROJ-42'] }));
   assert.equal(signals.length, 1);
   assert.ok(!signals.some((s) => s.detail.findingId === resolved.id));
 });
@@ -244,7 +248,7 @@ test('recordVerdict counts and names every open finding, not just one', () => {
     links: [{ to: req.id, relation: 'derived_from' }],
   });
 
-  const { signals } = assessReleaseRisk(store, { changed: ['PROJ-42'] });
+  const signals = findingSignals(assessReleaseRisk(store, { changed: ['PROJ-42'] }));
   assert.deepEqual(
     signals.map((s) => s.detail.findingId).sort(),
     [open.id, second.id].sort(),
@@ -268,7 +272,7 @@ test('recordVerdict counts and names every open finding, not just one', () => {
 
 test('recordVerdict allows a ship with an override and records the reason', () => {
   const store = new TraceStore(':memory:');
-  const { open } = seedRelease(store);
+  const { open, run } = seedRelease(store);
 
   const verdict = recordVerdict(store, {
     releaseRef: 'release/1',
@@ -284,6 +288,7 @@ test('recordVerdict allows a ship with an override and records the reason', () =
   assert.deepEqual(verdict.content.override, {
     reason: 'hotfix, accepted by release manager',
     findings: [open.id],
+    testRuns: [run.id],
   });
   assert.equal(verdict.provenance.approvedBy, 'r.mehta');
 });
@@ -344,7 +349,13 @@ test('recordVerdict rejects an override supplied with a hold verdict', () => {
 
 test('recordVerdict allows a ship when no signal is live', () => {
   const store = new TraceStore(':memory:');
-  const { req, open } = seedRelease(store);
+  const { req, open, testCase } = seedRelease(store);
+  store.record({
+    type: 'test_run',
+    content: { status: 'passed' },
+    provenance: human,
+    links: [{ to: testCase.id, relation: 'verifies' }],
+  });
   store.record({
     type: 'answer',
     content: { text: 'Retry twice, then raise a defect and alert on-call.' },
@@ -612,4 +623,147 @@ test('recordVerdict rejects the snake_case twins and plurals of denied terms, an
     );
   }
   assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+/** A requirement covered by one test, with the given runs recorded oldest first. No findings. */
+function seedTested(store: TraceStore, runs: { status: string; commit?: string; flaky?: boolean; message?: string }[]) {
+  const req = store.record({ type: 'requirement', sourceRef: 'PROJ-7', content: { text: 'r' }, provenance: human });
+  const tc = store.record({
+    type: 'test_case',
+    sourceRef: 'junit:refunds::emails',
+    content: { name: 'emails', classname: 'refunds' },
+    provenance: { producer: 'tool', tool: 'qa-spine ingest-junit' },
+    links: [{ to: req.id, relation: 'covers' }],
+  });
+  const runIds = runs.map(
+    (content) =>
+      store.record({
+        type: 'test_run',
+        sourceRef: 'ci/1',
+        content,
+        provenance: { producer: 'tool', tool: 'qa-spine ingest-junit' },
+        links: [{ to: tc.id, relation: 'verifies' }],
+      }).id,
+  );
+  return { req, tc, runIds };
+}
+const testSignals = (r: ReturnType<typeof assessReleaseRisk>) =>
+  r.signals.filter((s) => s.kind === 'failing_test_on_changed_area');
+
+test('a failing latest run on a changed requirement is a signal', () => {
+  const store = new TraceStore(':memory:');
+  const { req, tc, runIds } = seedTested(store, [{ status: 'failed', message: 'no email sent' }]);
+
+  const [signal, ...rest] = testSignals(assessReleaseRisk(store, { changed: ['PROJ-7'] }));
+  assert.equal(rest.length, 0);
+  assert.deepEqual(signal.artifacts, [runIds[0], tc.id, req.id]);
+  assert.equal(signal.detail.status, 'failed');
+  assert.equal(signal.detail.name, 'emails');
+  assert.equal(signal.detail.message, 'no email sent');
+  assert.equal(signal.detail.flaky, false);
+});
+
+test('an error latest run is a signal too', () => {
+  const store = new TraceStore(':memory:');
+  seedTested(store, [{ status: 'error' }]);
+  assert.equal(testSignals(assessReleaseRisk(store, { changed: ['PROJ-7'] })).length, 1);
+});
+
+test('a later passing run clears an earlier failure', () => {
+  const store = new TraceStore(':memory:');
+  seedTested(store, [{ status: 'failed' }, { status: 'passed' }]);
+  assert.equal(testSignals(assessReleaseRisk(store, { changed: ['PROJ-7'] })).length, 0);
+});
+
+test('a later failing run is not cleared by an earlier pass', () => {
+  const store = new TraceStore(':memory:');
+  seedTested(store, [{ status: 'passed' }, { status: 'failed' }]);
+  assert.equal(testSignals(assessReleaseRisk(store, { changed: ['PROJ-7'] })).length, 1);
+});
+
+test('a skipped latest run does not block', () => {
+  const store = new TraceStore(':memory:');
+  seedTested(store, [{ status: 'skipped' }]);
+  assert.equal(testSignals(assessReleaseRisk(store, { changed: ['PROJ-7'] })).length, 0);
+});
+
+test('a failing test on a requirement that did not change is not a signal', () => {
+  const store = new TraceStore(':memory:');
+  seedTested(store, [{ status: 'failed' }]);
+  assert.equal(testSignals(assessReleaseRisk(store, { changed: ['PROJ-8'] })).length, 0);
+});
+
+test('runs that disagree on one commit mark a failing test flaky, and it still blocks', () => {
+  const store = new TraceStore(':memory:');
+  seedTested(store, [{ status: 'passed', commit: 'c1' }, { status: 'failed', commit: 'c1' }]);
+  const result = assessReleaseRisk(store, { changed: ['PROJ-7'] });
+  const [signal] = testSignals(result);
+  assert.equal(signal.detail.flaky, true);
+  assert.equal(result.flaky.length, 1);
+});
+
+test('runs that disagree across different commits are not flaky', () => {
+  const store = new TraceStore(':memory:');
+  seedTested(store, [{ status: 'passed', commit: 'c1' }, { status: 'failed', commit: 'c2' }]);
+  const result = assessReleaseRisk(store, { changed: ['PROJ-7'] });
+  assert.equal(testSignals(result)[0].detail.flaky, false);
+  assert.deepEqual(result.flaky, []);
+});
+
+test('a flaky test whose latest run passed is listed as flaky but raises no signal', () => {
+  const store = new TraceStore(':memory:');
+  const { tc } = seedTested(store, [{ status: 'failed', commit: 'c1' }, { status: 'passed', commit: 'c1' }]);
+  const result = assessReleaseRisk(store, { changed: ['PROJ-7'] });
+  assert.equal(testSignals(result).length, 0);
+  assert.deepEqual(result.flaky.map((f) => [f.testCaseId, f.name]), [[tc.id, 'emails']]);
+});
+
+test('a run ingest flagged flaky makes its test flaky', () => {
+  const store = new TraceStore(':memory:');
+  seedTested(store, [{ status: 'failed', flaky: true }]);
+  assert.equal(testSignals(assessReleaseRisk(store, { changed: ['PROJ-7'] }))[0].detail.flaky, true);
+});
+
+test('recordVerdict refuses a ship while only a failing test is live, and names it', () => {
+  const store = new TraceStore(':memory:');
+  const { runIds } = seedTested(store, [{ status: 'failed' }]);
+  const before = store.list(undefined, 1e9).length;
+  assert.throws(
+    () =>
+      recordVerdict(store, {
+        releaseRef: 'r1', verdict: 'ship', reason: 'Looks fine.', cites: [], changed: ['PROJ-7'], provenance: human,
+      }),
+    (err) => {
+      assert.match((err as Error).message, /cannot ship: 1 failing test\(s\)/);
+      assert.ok((err as Error).message.includes(runIds[0]));
+      return true;
+    },
+  );
+  assert.equal(store.list(undefined, 1e9).length, before);
+});
+
+test('recordVerdict records liveTestRuns on a hold', () => {
+  const store = new TraceStore(':memory:');
+  const { runIds } = seedTested(store, [{ status: 'failed' }]);
+  const v = recordVerdict(store, {
+    releaseRef: 'r1', verdict: 'hold', reason: 'A test is failing.', cites: [], changed: ['PROJ-7'], provenance: human,
+  });
+  assert.deepEqual(v.content.liveTestRuns, [runIds[0]]);
+  assert.deepEqual(v.content.liveFindings, []);
+});
+
+test('an override of a failing test records the runs it overrode and needs a name', () => {
+  const store = new TraceStore(':memory:');
+  const { runIds } = seedTested(store, [{ status: 'failed' }]);
+  const input = {
+    releaseRef: 'r1', verdict: 'ship' as const, reason: 'Hotfix.', cites: [], changed: ['PROJ-7'],
+    override: { reason: 'Known flaky email stub, tracked separately.' },
+  };
+  assert.throws(() => recordVerdict(store, { ...input, provenance: human }), /approvedBy/);
+  const v = recordVerdict(store, { ...input, provenance: { ...human, approvedBy: 'a.rivera' } });
+  assert.deepEqual(v.content.override, {
+    reason: 'Known flaky email stub, tracked separately.',
+    findings: [],
+    testRuns: [runIds[0]],
+  });
 });
