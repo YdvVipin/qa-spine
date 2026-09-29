@@ -1,6 +1,6 @@
 # Test results from CI: JUnit ingest, and failing tests that block the gate
 
-**Status:** design approved, not implemented
+**Status:** design approved; flaky detection added 2026-09-29 (see *Flaky tests*)
 **Date:** 2026-09-25
 **Repo:** qa-spine only. Branch `junit-results`, cut from `delivery-integration` @ `6b606ca`
 (the gate and the Action, not yet merged to `main`).
@@ -98,6 +98,25 @@ The writes themselves go in one transaction. `TraceStore.record` currently issue
 `BEGIN`, which cannot nest, so it moves to `SAVEPOINT` / `RELEASE` / `ROLLBACK TO`, and the
 store gains `transaction(fn)` wrapping `BEGIN … COMMIT`. `record` behaves exactly as before
 when called outside one.
+
+### Flaky tests: detected, never excused
+
+Added 2026-09-29, from the enhancement roadmap (R2). A test is **flaky** when either:
+
+- one report holds the same test more than once with a `passed` and a `failed`/`error`
+  outcome (retry plugins) — the run is recorded with `content.flaky: true`; or
+- two of its runs carry the same `content.commit` and disagree the same way.
+
+`--commit` sets `content.commit`; omitted, ingest uses `git rev-parse HEAD` in the working
+directory, and records no commit when that fails (ingest outside a repository is legitimate).
+
+Detection only. A flaky test whose latest run failed **still blocks**: its signal carries
+`flaky: true`, the gate lists it as flaky, and the brief says so. Nothing relaxes the gate
+without an override and a name. `assessReleaseRisk` and the gate also list flaky tests on
+changed areas whose latest run passed, as information.
+
+Rejected: automatic quarantine (Trunk, BuildPulse). It would be the first thing in qa-spine
+to relax the gate without a person's name on it.
 
 ### Parser: small and built in
 

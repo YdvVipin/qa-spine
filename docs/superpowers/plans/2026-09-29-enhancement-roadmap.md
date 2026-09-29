@@ -95,10 +95,9 @@ Size: **S** ≈ 1–2 days, **M** ≈ 3–5 days, **L** ≈ 1–2 weeks (one dev
 - Clears when the new version is re-audited (an `audit_submit` against it, even with zero findings → needs an explicit "audited clean" record).
 
 **R2. Flaky-aware test blocking** (M, from Trunk/BuildPulse; amend the JUnit spec before building it)
-- A test whose runs disagree on the **same commit** (needs `--commit` on `ingest-junit`, default `git rev-parse HEAD`) is marked flaky.
-- A flaky test's failure is reported, not blocking.
-- Quarantine is an artifact with a reason and `approvedBy`, like an override. It is lifted by a later record, not by deletion.
-- Without this, the first flaky test after the JUnit phase ships teaches the team to use overrides by habit, and then overrides stop meaning anything.
+- A test whose runs disagree on the **same commit** (needs `--commit` on `ingest-junit`, default `git rev-parse HEAD`), or whose duplicates in one report disagree (retry plugins), is marked flaky.
+- Detection only (decided 2026-09-29): a flaky test's failure **still blocks**, labelled flaky in the gate output and the brief, so whoever overrides or reruns knows why. No automatic quarantine.
+- Without the label, the first flaky test after the JUnit phase ships teaches the team to override by habit without knowing whether the failure was real.
 
 **R3. Hash chain + `qa-spine verify`** (S)
 - Each artifact row stores `sha256(previous_hash + canonical JSON of this row)`.
@@ -195,7 +194,7 @@ project; that check is the countermeasure).
 ### Acceptance checks per milestone
 
 - **M0:** `main` contains the gate and Action; `uses: YdvVipin/qa-spine@v1` resolves; `PROJECT_STATUS.md` matches the README roadmap.
-- **M1:** everything in the JUnit spec's Testing section, plus: a test failing then passing on the same commit is flaky and does not block; a quarantine without `approvedBy` is rejected.
+- **M1:** everything in the JUnit spec's Testing section, plus: a test that failed and passed on the same commit is reported flaky; a flaky failing latest run still blocks.
 - **M2:** editing a row after dropping the triggers makes `verify` exit 1; `trace_record` with `type: 'verdict'` is rejected; a narrowed `changed` list appears in the brief.
 - **M3:** re-importing an unchanged ticket writes nothing; an edited ticket supersedes the old requirement; the gate lists the change as suspect; `--block-on-suspect` exits 1.
 - **M4:** accepting a suggestion retires the finding and the brief labels it an assumption; the PR comment's commands, pasted as-is, unblock the gate.
