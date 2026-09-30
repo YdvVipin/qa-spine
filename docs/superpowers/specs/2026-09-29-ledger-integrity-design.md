@@ -1,6 +1,6 @@
 # Ledger integrity: a hash chain, `verify`, and closing the gate's side doors
 
-**Status:** design approved (roadmap M2, decisions of 2026-09-29), implementing
+**Status:** implemented on `ledger-integrity`
 **Date:** 2026-09-29
 **Repo:** qa-spine only. Branch `ledger-integrity`, cut from `junit-results` @ `c95e6f1`.
 
@@ -71,7 +71,7 @@ A new table, append-only by triggers like the others:
 ```sql
 CREATE TABLE IF NOT EXISTS chain (
   seq  INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL,       -- 'artifact' | 'edge'
+  kind TEXT NOT NULL,       -- 'genesis' | 'artifact' | 'edge'
   ref  TEXT NOT NULL,       -- artifact id, or "from>to:relation"
   hash TEXT NOT NULL
 );
@@ -83,7 +83,11 @@ CREATE TABLE IF NOT EXISTS chain (
 - The canonical payload is the row exactly as stored (the JSON text columns, not re-serialized
   objects), as a JSON array: `["artifact", id, type, source_ref, content, provenance,
   created_at]` or `["edge", from, to, relation, created_at]`.
-- The genesis previous hash is 64 zeros.
+- The first chain row is a `genesis` row whose `ref` is `"<max artifact rowid>:<max edge
+  rowid>"` from just before chaining began, hashed from 64 zeros. Rows at or below those
+  watermarks are legacy.
+- `TraceStore` now creates its own directory when it opens a file. That replaced the CLI's
+  "exempt list" of commands that must not create one, which `verify` would have extended.
 
 `qa-spine verify` reports, and exits 1 on any of:
 

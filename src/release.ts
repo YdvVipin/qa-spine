@@ -73,14 +73,11 @@ export function isFlaky(runs: Artifact[]): boolean {
  * so deriving it through edges would let one changed file mark every requirement in the store
  * as changed, and every release would block on everything.
  *
- * ponytail: a finding retires the moment anything supersedes it, regardless of what wrote that
- * edge — `openFindings` only checks that a `supersedes` edge exists, not that it came from
- * `audit_answer`. So `trace_record` can retire a live finding directly (or write a `type:
- * 'verdict'` artifact outright, bypassing this gate altogether), leaving no signal, no
- * override, and no trace here that either happened — the same hole `audit_answer` documents
- * for its own guard at src/audit.ts:206-213. Upgrade path: same as there, a store-level
- * guard or constraint that only the gated recorders can satisfy, once this project has a
- * migration story.
+ * A finding retires the moment anything supersedes it — `openFindings` only checks that a
+ * `supersedes` edge exists. The raw write paths refuse to create one onto a finding, and refuse
+ * `verdict` outright (`assertRawRecordAllowed` in src/trace/store.ts), so only `audit_answer`
+ * retires a question and only `release_submit` records a decision. Code importing the store
+ * directly is not guarded; `qa-spine verify` is what catches a row that did not come through here.
  */
 export function assessReleaseRisk(
   store: TraceStore,

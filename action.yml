@@ -91,6 +91,18 @@ runs:
       run: |
         set -o pipefail
 
+        # A ledger nobody can vouch for cannot clear or block a release: that is "could not
+        # tell". Checked before anything reads it or writes to it.
+        set +e
+        npx --yes qa-spine@${{ inputs.version }} verify > verify.json 2> verify.err
+        verify_status=$?
+        set -e
+        if [ "$verify_status" != "0" ]; then
+          echo "::error::qa-spine: the trace store failed its integrity check"
+          cat verify.json verify.err >&2
+          exit 2
+        fi
+
         # Test results first, into the same store, so the gate below sees them. A glob that
         # matches nothing is an error: "no reports" read as "no failures" is a false green.
         if [ -n "${{ inputs.junit }}" ]; then

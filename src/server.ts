@@ -346,6 +346,7 @@ usage: qa-spine [subcommand]
   gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
   ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
+  verify                  check the ledger's hash chain — exit 0 intact, 1 tampered, 2 error
   help                    show this screen
 
 environment:
@@ -362,6 +363,7 @@ const SUBCOMMANDS = new Set([
   'audit-submit',
   'gate',
   'ingest-junit',
+  'verify',
   'review-export',
 ]);
 
@@ -384,17 +386,9 @@ if (invokedAsScript()) {
     process.exit(1);
   }
 
+  // The store creates its own directory when opened, so a command that never opens the
+  // configured store (`init`, `demo`, `verify` on a missing store) never creates one either.
   const path = dbPath();
-  // `init` and `demo` never read or write the configured store, so they must not
-  // create its directory either — a demo that leaves an empty .qa-spine/ in your
-  // working directory has already broken the promise it makes in its own output.
-  //
-  // ponytail: an exempt list rather than moving this into each case that opens a
-  // store. Seven cases need it and two do not; inverting that is more churn than
-  // it buys. If a third exempt command appears, move it into the cases instead.
-  if (subcommand !== 'init' && subcommand !== 'demo') {
-    mkdirSync(dirname(path), { recursive: true });
-  }
 
   switch (process.argv[2]) {
     case 'inspect': {
@@ -564,6 +558,25 @@ if (invokedAsScript()) {
         if (values.summary) writeFileSync(values.summary, renderSummary(result));
         console.log(values.json ? JSON.stringify(result, null, 2) : renderSummary(result));
         process.exitCode = result.shippable ? 0 : 1;
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 2;
+      }
+      break;
+    }
+
+    case 'verify': {
+      // Reads only. A missing store is "could not tell", and opening one here would create
+      // an empty store that then verifies clean — the one wrong answer this must not give.
+      if (!existsSync(path)) {
+        console.error(`no trace store at ${path} — check QA_SPINE_DB`);
+        process.exitCode = 2;
+        break;
+      }
+      try {
+        const result = new TraceStore(path).verify();
+        console.log(JSON.stringify(result, null, 2));
+        process.exitCode = result.ok ? 0 : 1;
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 2;

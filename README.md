@@ -48,7 +48,7 @@ npm run build
 | Tool | What it does |
 | --- | --- |
 | `health` | Confirms the server is up; reports the store path and artifact count. |
-| `trace_record` | Appends an artifact and its edges to existing artifacts, atomically. |
+| `trace_record` | Appends an artifact and its edges to existing artifacts, atomically. Refuses findings, answers and verdicts, which have their own gated tools. |
 | `trace_query` | Given an artifact ID, returns the full upstream/downstream chain. Without an ID, lists recent artifacts. |
 | `audit_requirement` | Returns a requirement plus the published ambiguity rubric, for the calling agent to reason over. Makes no model call. |
 | `audit_submit` | Records ambiguity findings, rejecting any that cite an unknown rule or a quote absent from the requirement. |
@@ -101,6 +101,18 @@ The store is **append-only, enforced by SQLite triggers** rather than by applica
 so history survives someone opening the file with the `sqlite3` CLI. Nothing is ever
 updated or deleted; to retract an artifact you append a replacement and link it with
 `supersedes`. Both versions remain readable and the chain records that the change happened.
+
+Triggers stop an edit, but not someone who drops the triggers first. So every artifact and
+edge written through qa-spine is also **hash-chained**: `sha256(previous hash + the row as
+stored)`. `qa-spine verify` recomputes the chain and exits 1 on a row changed after it was
+recorded, a row deleted, or a row added straight into SQLite; 0 when intact; 2 when there is
+no store. The GitHub Action runs it before the gate. Rows written by a qa-spine from before the
+chain are counted as `legacy`, never as tampering, so upgrading cannot turn a build red.
+
+The limit is stated rather than hidden: nothing anchors the chain outside the file, so someone
+who understands it can rewrite a row and recompute every hash after it. `verify` prints the
+`head` hash so you can anchor it somewhere you already trust — a CI log, a release note. A
+store committed to git is anchored by git.
 
 Provenance is mandatory and validated on write: an artifact claiming `producer: "ai"` is
 rejected unless it also carries `model` and `promptVersion`. An AI artifact that cannot say
@@ -161,12 +173,11 @@ non-blocking — nothing stops a ship over it, it is only ever reported.
 and it recomputes the signals from `changed` itself rather than trusting a list the caller
 could hand it. That stops an agent from waving a `ship` through by keeping `changed` but
 dropping a signal from its own copy of the result — but it does not stop the call from naming
-fewer refs than the release actually touched. Nothing cross-checks `changed` at
-`release_submit` against the `changed` an earlier `assess_release_risk` call saw, so an agent
-that quietly narrows the list before submitting can ship clean. What recomputation actually
-buys is a paper trail, not a lock: the `changed` list a verdict was recorded against is part of
-the verdict, so a narrowed list is visible after the fact even though nothing rejected it up
-front.
+fewer refs than the release actually touched. When the same MCP session assessed that release
+earlier, `release_submit` compares the two lists and records anything it dropped as
+`droppedFromAssessment`; the brief then says the decision covered fewer areas than were
+assessed. That is recorded, not refused: splitting one release into two decisions is
+legitimate. An assessment from another session, or with no `releaseRef`, is not compared.
 
 `recordVerdict` also validates at the function boundary, not only in the MCP tool's Zod
 schema: a blank `releaseRef`, a blank `reason`, a `verdict` that isn't exactly `ship` or
@@ -188,14 +199,11 @@ responsive grid lays that callout out to the left rather than above, but it is s
 panel a human's eye meets. An overridden ship is not buried in the record — it is the first
 thing a human sees.
 
-None of this is enforced anywhere but `release_submit` itself. `trace_record` can append a
-`type: 'verdict'` artifact directly with no signal check and no override, because the gate
-lives in `recordVerdict`, not in the store. And
-the veto itself can be defeated cleanly: appending any artifact with a `supersedes` edge to an
-open finding retires it, whether that edge came from `audit_answer` or a raw `trace_record`
-call, after which `assess_release_risk` sees no signal at all and a `ship` records no override
-— the release then looks exactly like one with nothing outstanding, which is the more
-dangerous of the two holes precisely because the record looks clean.
+The raw write paths cannot go around this. `trace_record` and the CLI `record` refuse a
+`finding`, an `answer` or a `verdict` — each names the gated tool to use instead — and refuse a
+`supersedes` link onto a finding, which is how a question would otherwise be retired with no
+answer. Code that imports `TraceStore` directly is not guarded; that is the same trust boundary
+as opening the SQLite file, and the hash chain below is what catches it.
 
 Real ticket text, instead of hand-written fixtures:
 
@@ -337,8 +345,10 @@ empty rather than reporting a clean release.
   runs on every change instead of when somebody remembers. Done.
 - **Test results from CI.** `ingest-junit`, and a failing test on a changed area blocks the
   gate, with flaky tests labelled. Done.
+- **Ledger integrity.** Hash chain and `qa-spine verify`; raw writes can no longer record
+  gated types or retire a question; a narrowed release list is recorded. Done.
 - **Next — see [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).**
-  Tamper-evidence, requirement versions, faster answering, rubric measurement.
+  Requirement versions, faster answering, rubric measurement.
 - **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
 
 ## License
