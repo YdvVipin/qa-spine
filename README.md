@@ -223,6 +223,35 @@ The raw write paths cannot go around this. `trace_record` and the CLI `record` r
 answer. Code that imports `TraceStore` directly is not guarded; that is the same trust boundary
 as opening the SQLite file, and the hash chain below is what catches it.
 
+### AI answers that need a person's approval
+
+By default an agent can answer its own audit questions, and the answer retires the question;
+provenance makes that visible, not impossible. `--require-human-answers` on the gate (or
+`QA_SPINE_REQUIRE_HUMAN_ANSWERS=1`, which `release_submit` also reads) changes that: an AI
+answer retires a question only once a person approves it, with a 👍 in the Inspector or
+
+```bash
+qa-spine approve answer_52e8c0d4 --by a.rivera
+```
+
+Until then the question is open, and the gate prints that command next to it.
+
+### Sharing a ledger
+
+```bash
+qa-spine merge ../teammate/.qa-spine/trace.db
+```
+
+brings in every artifact and edge the other store has and this one lacks, with their ids and
+times, chained here. The other store must pass `verify`; an id both stores hold with different
+content refuses the whole merge. Merging twice changes nothing, and the source is never written.
+
+### Over MCP
+
+Besides the tools, the server publishes the rubric as a resource
+(`qa-spine://rubrics/ambiguity`) and an `audit-ticket` prompt that takes a ticket key, so a
+client can offer both in its menus.
+
 Real ticket text, instead of hand-written fixtures:
 
 ```bash
@@ -230,8 +259,19 @@ JIRA_SITE=yourteam.atlassian.net JIRA_EMAIL=you@example.com JIRA_TOKEN=... \
   node examples/import-jira.ts 'project = PROJ AND fixVersion = "2026.7.3"'
 ```
 
-That script is a loader in `examples/`, not a feature. Nothing in `src/` knows what Jira is,
-and the server still makes no network call of its own.
+GitHub Issues and Linear work the same way:
+
+```bash
+GITHUB_TOKEN=... node examples/import-github.ts acme/shop requirement   # keys like #123
+LINEAR_API_KEY=... node examples/import-linear.ts ENG                   # keys like ENG-123
+```
+
+GitHub keys are `#123`, so run the gate with `--ticket-pattern '#\d+'` to match "Fixes #123" in
+commit messages. `GITHUB_API_URL` points the GitHub one at GitHub Enterprise. Every importer
+versions rather than duplicates, so re-running one is safe.
+
+These scripts are loaders in `examples/`, not features. Nothing in `src/` knows what Jira,
+GitHub or Linear is, and the server still makes no network call of its own.
 
 ## The release brief
 
@@ -424,8 +464,8 @@ empty rather than reporting a clean release.
 - **Rubric measurement.** `qa-spine rubric-report`, and an `ambiguity/2` candidate rubric. Done.
 - **Coverage and reports.** Untested requirements, `--require-coverage`, `export`, and the
   Inspector's readiness view. Done.
-- **Next — see [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).**
-  Team features.
+- **Team features.** `merge`, GitHub and Linear importers, the rubric and an audit prompt
+  over MCP, and optional human approval of AI answers. Done.
 - **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
 
 ## License
