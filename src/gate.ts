@@ -144,7 +144,12 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
 
   const assessment = assessReleaseRisk(store, { changed, releaseRef: opts.releaseRef });
   const signals = assessment.signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail] : []));
-  const failingTests = assessment.signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
+  // One entry per failing run: a test covering two changed requirements is one failing test,
+  // named against the first of them, not two.
+  const seenRuns = new Set<string>();
+  const failingTests = assessment.signals
+    .flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []))
+    .filter((t) => !seenRuns.has(t.testRunId) && !!seenRuns.add(t.testRunId));
   const blocked = signals.length + failingTests.length > 0;
   const overriding = !!opts.overrideReason && blocked;
   const shippable = !blocked || overriding;

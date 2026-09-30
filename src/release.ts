@@ -291,7 +291,7 @@ export function recordVerdict(
   if (input.verdict === 'ship' && signals.length && !overrideReason) {
     const counts = [
       ...(liveFindings.length ? [`${liveFindings.length} unresolved finding(s)`] : []),
-      ...(failing.length ? [`${failing.length} failing test(s)`] : []),
+      ...(liveTestRuns.length ? [`${liveTestRuns.length} failing test(s)`] : []),
     ];
     const named = signals
       .map((s) =>

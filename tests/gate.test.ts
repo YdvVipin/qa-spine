@@ -398,3 +398,15 @@ test('a named override ships over a failing test and records the run it overrode
     assert.deepEqual((verdict.content.override as any).testRuns, [run]);
   });
 });
+
+test('one failing test covering two changed requirements is one failing test', () => {
+  withStore(({ db, store }) => {
+    const second = store.record({ type: 'requirement', sourceRef: 'PROJ-8', content: { text: 'r8' }, provenance: human });
+    const [run] = addTest(store, [{ status: 'failed' }]);
+    const tc = store.edgesFrom(run).find((e) => e.relation === 'verifies')!.toArtifactId;
+    store.link(tc, second.id, 'covers');
+    const { out } = gate(['--changed', 'PROJ-7,PROJ-8'], db);
+    assert.match(out, /\*\*1 failing test on areas/);
+    assert.equal(JSON.parse(gate(['--changed', 'PROJ-7,PROJ-8', '--json'], db).out).failingTests.length, 1);
+  });
+});

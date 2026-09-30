@@ -767,3 +767,14 @@ test('an override of a failing test records the runs it overrode and needs a nam
     testRuns: [runIds[0]],
   });
 });
+
+test('the ship refusal counts a test covering two changed requirements once', () => {
+  const store = new TraceStore(':memory:');
+  const { tc } = seedTested(store, [{ status: 'failed' }]);
+  const other = store.record({ type: 'requirement', sourceRef: 'PROJ-8', content: { text: 'r8' }, provenance: human });
+  store.link(tc.id, other.id, 'covers');
+  assert.throws(
+    () => recordVerdict(store, { releaseRef: 'r', verdict: 'ship', reason: 'Fine.', cites: [], changed: ['PROJ-7', 'PROJ-8'], provenance: human }),
+    /cannot ship: 1 failing test\(s\)/,
+  );
+});
