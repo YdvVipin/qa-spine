@@ -254,6 +254,8 @@ export function recordVerdict(
     changed: string[];
     override?: { reason: string };
     provenance: Provenance;
+    /** The `changed` of an earlier assessment of this release, when the caller has one. */
+    assessedChanged?: string[];
   },
 ): Artifact {
   const releaseRef = input.releaseRef.trim();
@@ -287,6 +289,8 @@ export function recordVerdict(
   const liveFindings = signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail.findingId] : []));
   const failing = signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
   const liveTestRuns = [...new Set(failing.map((t) => t.testRunId))];
+  const inVerdict = new Set(release.changed);
+  const dropped = [...new Set((input.assessedChanged ?? []).map((r) => r.trim()).filter((r) => r && !inVerdict.has(r)))];
   if (input.verdict === 'ship' && signals.length && !overrideReason) {
     const counts = [
       ...(liveFindings.length ? [`${liveFindings.length} unresolved finding(s)`] : []),
@@ -352,6 +356,10 @@ export function recordVerdict(
       // The failing runs that were latest at decision time, by the same reasoning as
       // liveFindings: the brief must say what was failing *then*, not what fails now.
       liveTestRuns,
+      // Areas an earlier assessment of this release covered that this verdict leaves out.
+      // Not refused — splitting a release into two decisions is legitimate — but recorded,
+      // so a quietly narrowed list is visible instead of looking like a clean release.
+      ...(dropped.length ? { droppedFromAssessment: dropped } : {}),
     },
     provenance: input.provenance,
     links: cites.map((to) => ({ to, relation: 'derived_from' as const })),

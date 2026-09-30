@@ -81,6 +81,7 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const changed: string[] = Array.isArray(c.changed) ? c.changed : [];
   const unmatched = new Set<string>(Array.isArray(c.unmatched) ? c.unmatched : []);
   const override = c.override && typeof c.override === 'object' ? c.override : null;
+  const dropped: string[] = Array.isArray(c.droppedFromAssessment) ? c.droppedFromAssessment : [];
 
   // C1: section 3 is built from `content.liveFindings` alone — the findings that were
   // actually open (unresolved) when the verdict was recorded — never from `cites` (the
@@ -211,6 +212,16 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
         // than the softened note below it does. The approved wording stays exactly as-is
         // on the liveFindings-present branch, where it's true.
         `<h2>${usingFallback ? 'Questions cited in this decision' : 'Questions that were still open when this decision was made'}</h2>${questionBlocks}`
+      : ''
+  }
+
+  ${
+    dropped.length
+      ? `<div class="override">
+    <strong>This decision covered fewer areas than were assessed earlier.</strong>
+    <p>Assessed, but left out of this decision:</p>
+    <ul>${dropped.map((ref) => `<li>${esc(ref)}</li>`).join('')}</ul>
+  </div>`
       : ''
   }
 

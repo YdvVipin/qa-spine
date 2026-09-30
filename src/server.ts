@@ -32,6 +32,11 @@ const fail = (message: string) => ({ ...json({ error: message }), isError: true 
 
 export function createServer(store: TraceStore) {
   const server = new McpServer({ name: 'qa-spine', version: VERSION });
+  // releaseRef -> the `changed` list of the latest assess_release_risk for it in this session,
+  // so release_submit can record areas it assessed but then left out of the decision.
+  // ponytail: per session and in memory — an assessment from another session is not seen.
+  // Upgrade: record assessments in the ledger, if narrowing across sessions becomes a pattern.
+  const assessed = new Map<string, string[]>();
 
   server.registerTool(
     'health',
@@ -204,7 +209,9 @@ export function createServer(store: TraceStore) {
     },
     (args) => {
       try {
-        return json(assessReleaseRisk(store, args));
+        const result = assessReleaseRisk(store, args);
+        if (args.releaseRef?.trim()) assessed.set(args.releaseRef.trim(), result.release.changed);
+        return json(result);
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
@@ -249,7 +256,7 @@ export function createServer(store: TraceStore) {
     },
     (args) => {
       try {
-        return json(recordVerdict(store, args));
+        return json(recordVerdict(store, { ...args, assessedChanged: assessed.get(args.releaseRef.trim()) }));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

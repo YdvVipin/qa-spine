@@ -96,3 +96,34 @@ test('the CLI record subcommand refuses the same things', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a verdict naming fewer areas than its assessment records what was dropped', async () => {
+  const { store, call } = await connect();
+  store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
+  await call('assess_release_risk', { changed: ['PROJ-1', 'src/pay.ts', 'src/refund.ts'], releaseRef: 'v5' });
+  const res = await call('release_submit', {
+    releaseRef: 'v5', verdict: 'ship', reason: 'Clean.', cites: [], changed: ['PROJ-1'], provenance: human,
+  });
+  assert.equal(res.isError, false, JSON.stringify(res.body));
+  assert.deepEqual(store.get(res.body.id)!.content.droppedFromAssessment, ['src/pay.ts', 'src/refund.ts']);
+});
+
+test('a verdict naming everything it assessed records no dropped field', async () => {
+  const { store, call } = await connect();
+  store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
+  await call('assess_release_risk', { changed: ['PROJ-1'], releaseRef: 'v5' });
+  const res = await call('release_submit', {
+    releaseRef: 'v5', verdict: 'ship', reason: 'Clean.', cites: [], changed: ['PROJ-1', 'src/extra.ts'], provenance: human,
+  });
+  assert.equal('droppedFromAssessment' in store.get(res.body.id)!.content, false);
+});
+
+test('an assessment of a different release is not compared', async () => {
+  const { store, call } = await connect();
+  store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
+  await call('assess_release_risk', { changed: ['PROJ-1', 'src/pay.ts'], releaseRef: 'v4' });
+  const res = await call('release_submit', {
+    releaseRef: 'v5', verdict: 'ship', reason: 'Clean.', cites: [], changed: ['PROJ-1'], provenance: human,
+  });
+  assert.equal('droppedFromAssessment' in store.get(res.body.id)!.content, false);
+});

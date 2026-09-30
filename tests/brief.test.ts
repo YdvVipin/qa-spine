@@ -613,3 +613,15 @@ test('a rerun recorded after the decision does not make the brief call the test 
   });
   assert.doesNotMatch(renderBrief(store, v.id), /also passed/);
 });
+
+test('a verdict that dropped assessed areas says so in plain words', () => {
+  const store = new TraceStore(':memory:');
+  store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
+  const v = recordVerdict(store, {
+    releaseRef: 'r1', verdict: 'ship', reason: 'Clean.', cites: [], changed: ['PROJ-1'], provenance: human,
+    assessedChanged: ['PROJ-1', 'src/pay.ts'],
+  });
+  const html = body(renderBrief(store, v.id));
+  assert.match(html, /covered fewer areas than were assessed earlier/);
+  assert.match(html, /src\/pay\.ts/);
+});
