@@ -1,7 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { Artifact, Edge, Provenance, type Chain, type Relation } from './schema.ts';
 
 /**
@@ -202,6 +203,12 @@ export class TraceStore {
       createdAt: new Date().toISOString(),
     });
 
+    this.insertArtifact(artifact, input.links ?? []);
+    return artifact;
+  }
+
+  /** Writes an artifact exactly as given — id and time included — with its chain row and links. */
+  private insertArtifact(artifact: Artifact, links: { to: string; relation: Relation }[]) {
     // A savepoint, not BEGIN: BEGIN cannot nest, and record() must work both on its own
     // and inside transaction(). Outside one, a savepoint opens and commits its own.
     this.db.exec('SAVEPOINT record');
@@ -218,13 +225,68 @@ export class TraceStore {
         .prepare('INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?)')
         .run(row.id, row.type, row.source_ref, row.content, row.provenance, row.created_at);
       this.appendChain('artifact', row.id, artifactPayload(row), lastInsertRowid);
-      for (const link of input.links ?? []) this.link(artifact.id, link.to, link.relation);
+      for (const link of links) this.link(artifact.id, link.to, link.relation);
       this.db.exec('RELEASE record');
     } catch (err) {
       this.db.exec('ROLLBACK TO record; RELEASE record');
       throw err;
     }
-    return artifact;
+  }
+
+  /**
+   * Brings in every artifact and edge another store has and this one lacks, keeping their ids
+   * and times, chained here as they arrive. The other store must verify first, and an id both
+   * stores hold with different content refuses the whole merge: append-only means neither copy
+   * can be the one that wins. All or nothing, in one transaction.
+   *
+   * Opened on a copy, because opening a store writes its schema and a merge must not touch
+   * its source.
+   *
+   * ponytail: two stores that each versioned the same requirement independently end up with
+   * two current versions. The next recordRequirement for that ref supersedes both, which is
+   * the same fold that cleans up old duplicates.
+   */
+  mergeFrom(otherPath: string): { artifacts: number; edges: number } {
+    if (!existsSync(otherPath)) throw new Error(`no trace store at ${otherPath}`);
+    const dir = mkdtempSync(join(tmpdir(), 'qa-spine-merge-'));
+    const copy = join(dir, 'source.db');
+    copyFileSync(otherPath, copy);
+    const other = new TraceStore(copy);
+    try {
+      const check = other.verify();
+      if (!check.ok) {
+        throw new Error(
+          `${otherPath} failed verification, refusing to merge: ` +
+            check.problems.map((p) => `${p.ref} ${p.problem}`).join('; '),
+        );
+      }
+      const incoming = other.list(undefined, 1e9).reverse();
+      return this.transaction(() => {
+        let artifacts = 0;
+        let edges = 0;
+        for (const a of incoming) {
+          const mine = this.get(a.id);
+          if (!mine) {
+            this.insertArtifact(a, []);
+            artifacts++;
+          } else if (canonical(mine) !== canonical(a)) {
+            throw new Error(`artifact ${a.id} differs between the two stores — refusing to merge`);
+          }
+        }
+        for (const a of incoming) {
+          for (const e of other.edgesFrom(a.id)) {
+            const have = this.edgesFrom(e.fromArtifactId).some((m) => m.toArtifactId === e.toArtifactId && m.relation === e.relation);
+            if (have) continue;
+            this.insertEdge(e.fromArtifactId, e.toArtifactId, e.relation, e.createdAt);
+            edges++;
+          }
+        }
+        return { artifacts, edges };
+      });
+    } finally {
+      other.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 
   /**
@@ -246,12 +308,11 @@ export class TraceStore {
   }
 
   link(from: string, to: string, relation: Relation): Edge {
-    const edge: Edge = Edge.parse({
-      fromArtifactId: from,
-      toArtifactId: to,
-      relation,
-      createdAt: new Date().toISOString(),
-    });
+    return this.insertEdge(from, to, relation, new Date().toISOString());
+  }
+
+  private insertEdge(from: string, to: string, relation: Relation, createdAt: string): Edge {
+    const edge: Edge = Edge.parse({ fromArtifactId: from, toArtifactId: to, relation, createdAt });
     // The edge and its chain row land together or not at all.
     this.db.exec('SAVEPOINT link');
     try {

@@ -388,6 +388,7 @@ usage: qa-spine [subcommand]
   gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
   ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
+  merge <other.db>        bring in what another verified store has and this one lacks
   export --format csv|html|jsonl
                           traceability matrix (csv, html) or every artifact and edge (jsonl)
   rubric-report [--json]  how often reviewers judged each rubric version's findings good
@@ -414,6 +415,7 @@ const SUBCOMMANDS = new Set([
   'review-export',
   'rubric-report',
   'export',
+  'merge',
 ]);
 
 if (invokedAsScript()) {
@@ -455,6 +457,18 @@ if (invokedAsScript()) {
       console.error(`qa-spine inspector → http://127.0.0.1:${port}  (reading ${path})`);
       break;
     }
+    case 'merge': {
+      try {
+        const other = process.argv[3];
+        if (!other) throw new Error('usage: qa-spine merge <other.db>');
+        console.log(JSON.stringify(new TraceStore(path).mergeFrom(other)));
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+      }
+      break;
+    }
+
     case 'export': {
       try {
         const { values } = parseArgs({
