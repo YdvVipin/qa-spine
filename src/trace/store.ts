@@ -34,6 +34,37 @@ CREATE TRIGGER IF NOT EXISTS edges_no_delete BEFORE DELETE ON edges
   BEGIN SELECT RAISE(ABORT, 'trace store is append-only'); END;
 `;
 
+/** Types whose only legitimate writer is a gated recorder, and the recorder to use instead. */
+const GATED: Partial<Record<Artifact['type'], string>> = {
+  finding: 'audit_submit (it checks the quote is verbatim and the rule exists)',
+  answer: 'audit_answer',
+  verdict: 'release_submit (it recomputes what blocks the release)',
+};
+
+/**
+ * The check the raw write paths (`trace_record`, CLI `record`) run before `store.record`.
+ * It cannot live in `record` itself, because the gated recorders are what call `record`.
+ * Without it, a raw write could retire an open question with no answer, or record a ship
+ * verdict the gate never saw — the two holes this project used to document instead of close.
+ *
+ * ponytail: code that imports TraceStore directly is not guarded, the same trust boundary as
+ * opening the SQLite file. The hash chain is what catches that after the fact.
+ */
+export function assertRawRecordAllowed(
+  store: TraceStore,
+  input: { type: Artifact['type']; links?: { to: string; relation: Relation }[] },
+): void {
+  const gated = GATED[input.type];
+  if (gated) throw new Error(`a ${input.type} cannot be recorded directly — use ${gated}`);
+  for (const link of input.links ?? []) {
+    if (link.relation === 'supersedes' && store.get(link.to)?.type === 'finding') {
+      throw new Error(
+        `cannot supersede finding ${link.to} directly — answer it with audit_answer, which is what retires a question`,
+      );
+    }
+  }
+}
+
 type Row = {
   id: string;
   type: string;
