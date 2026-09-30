@@ -20,7 +20,7 @@ evidence) and validates what comes back. It also never mutates JIRA, repos, or C
 own — every write is an explicit call the agent makes, and a `ship` verdict is blocked
 unless the caller supplies an override reason while a signal is live.
 
-## Status: Phases 1–5 complete, plus JUnit results and ledger integrity (Sep 2026)
+## Status: Phases 1–5 complete, plus JUnit results, ledger integrity and requirement versions (Sep 2026)
 
 | Phase | What | Status |
 |---|---|---|
@@ -32,8 +32,9 @@ unless the caller supplies an override reason while a signal is live.
 | — | **Audit-before-generating** — wires the Phase 2 audit into QAAE's ticket→test pipeline | Done (`efe86c1`) |
 | 5 | Packaging — `npx qa-spine`, `init`, `demo`, published rubrics | Done |
 | 4 | Delivery integration — `qa-spine gate` and a composite GitHub Action | Done |
-| — | JUnit results — `ingest-junit`; a failing test on a changed area blocks; flaky tests labelled | Done, on `junit-results` |
-| — | Ledger integrity — hash chain + `verify`; raw writes can't record gated types; narrowed release lists recorded | Done, on `ledger-integrity` |
+| — | JUnit results — `ingest-junit`; a failing test on a changed area blocks; flaky tests labelled | Done, merged to `main` |
+| — | Ledger integrity — hash chain + `verify`; raw writes can't record gated types; narrowed release lists recorded | Done, merged to `main` |
+| — | Requirement versions — edits supersede instead of duplicating; suspect until re-audited; clean audits recorded | Done, on `requirement-versions` |
 | Later | `generate_fixtures` — schema-validated test data with locale packs | Not started |
 
 What comes next, and why, is in
@@ -57,7 +58,7 @@ src/
     server.ts        135 lines  loopback-only HTTP server for the Inspector UI
     ui/                         index.html, style.css, app.js (vanilla, no build step)
 
-tests/               4,259 lines across 19 files — 248 tests, all passing
+tests/               4,567 lines across 20 files — 273 tests, all passing
 rubrics/ambiguity.json          the published ambiguity rubric (4 rules, version ambiguity/1)
 action.yml                      composite GitHub Action wrapping `qa-spine gate`
 examples/            import-jira.ts, github-workflow.yml — no Jira coupling in the server
@@ -171,7 +172,7 @@ mtime unchanged) throughout — all verification ran against a scratch DB via `Q
 
 ## Testing
 
-- qa-spine: `npm test` → 248/248 passing, `tsc` clean via `npm run build`.
+- qa-spine: `npm test` → 273/273 passing, `tsc` clean via `npm run build`.
 - QAAE side of the integration: 105 passed, 1 skipped across the auditor, spine-client,
   spine-instrumentation, orchestration-loop and plan-generator suites.
 - Every fix in the final review round was verified with an explicit **round-trip**: revert

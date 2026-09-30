@@ -51,7 +51,7 @@ npm run build
 | `trace_record` | Appends an artifact and its edges to existing artifacts, atomically. Refuses findings, answers and verdicts, which have their own gated tools. |
 | `trace_query` | Given an artifact ID, returns the full upstream/downstream chain. Without an ID, lists recent artifacts. |
 | `audit_requirement` | Returns a requirement plus the published ambiguity rubric, for the calling agent to reason over. Makes no model call. |
-| `audit_submit` | Records ambiguity findings, rejecting any that cite an unknown rule or a quote absent from the requirement. |
+| `audit_submit` | Records ambiguity findings, rejecting any that cite an unknown rule or a quote absent from the requirement. An empty list records a clean audit. |
 | `audit_open` | Lists ambiguity questions still waiting on an answer, each with the requirement text needed to answer it. |
 | `audit_answer` | Records an answer. The answer supersedes the finding, which retires it. |
 | `assess_release_risk` | Given the areas a release touches, returns every unresolved requirement-stage finding and every failing covering test on them, plus surrounding artifacts as unscored evidence. Makes no model call. |
@@ -93,7 +93,7 @@ made the agents better or worse.
 
 ## The trace store
 
-Artifacts are `requirement | finding | test_case | test_run | defect | verdict | review | answer`. Edges are
+Artifacts are `requirement | finding | test_case | test_run | defect | verdict | review | answer | audit`. Edges are
 `derived_from | tests | covers | verifies | contradicts | supersedes`, always directed from
 the newer artifact to the older one.
 
@@ -282,6 +282,23 @@ nothing in the record covered the change at all — a release where nothing matc
 a clean release, and reporting it as one would manufacture confidence the ledger never
 earned.
 
+### Edited requirements
+
+Tickets change. Recording a requirement whose `sourceRef` already exists (through
+`trace_record`, the CLI `record`, or the Jira importer) versions it instead of duplicating it:
+the same content writes nothing, different content supersedes the current version. Re-running
+an import is safe.
+
+An edited requirement is **suspect** until it is audited again: its questions were answered
+and its tests written against wording that changed. The gate lists suspect requirements on
+the areas a change touches, the verdict records them, and the brief names them. It is a
+warning by default. `--block-on-suspect` (Action input `block-on-suspect`) makes it block,
+and only a re-audit clears it — an override is a person accepting a known risk, and a
+requirement nobody has looked at since it changed is not known yet.
+
+An audit that finds nothing is itself recorded: `audit_submit` with an empty `findings` list
+writes one `audit` artifact, which is what clears a suspect requirement that is now clean.
+
 ### Test results
 
 ```bash
@@ -348,8 +365,10 @@ empty rather than reporting a clean release.
   gate, with flaky tests labelled. Done.
 - **Ledger integrity.** Hash chain and `qa-spine verify`; raw writes can no longer record
   gated types or retire a question; a narrowed release list is recorded. Done.
+- **Requirement versions.** Edited requirements supersede instead of duplicating, are
+  flagged suspect until re-audited, and a clean audit is recorded. Done.
 - **Next — see [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).**
-  Requirement versions, faster answering, rubric measurement.
+  Faster answering, rubric measurement, coverage.
 - **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
 
 ## License

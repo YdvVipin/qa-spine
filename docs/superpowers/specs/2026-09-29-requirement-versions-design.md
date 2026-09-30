@@ -1,6 +1,6 @@
 # Requirement versions and suspect requirements
 
-**Status:** design approved (roadmap M3, decisions of 2026-09-29), implementing
+**Status:** implemented on `requirement-versions`
 **Date:** 2026-09-29
 **Repo:** qa-spine only. Branch `requirement-versions`, cut from `main` @ `14149d0`.
 
