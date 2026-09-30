@@ -83,6 +83,13 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const override = c.override && typeof c.override === 'object' ? c.override : null;
   const dropped: string[] = Array.isArray(c.droppedFromAssessment) ? c.droppedFromAssessment : [];
   const suspect: string[] = Array.isArray(c.suspect) ? c.suspect : [];
+  // Each answer that accepted a suggested default, beside the question it answered.
+  const assumptions = (Array.isArray(c.assumptions) ? c.assumptions : []).flatMap((id: string) => {
+    const answer = store.get(id);
+    const findingId = answer && store.edgesFrom(answer.id).find((e) => e.relation === 'supersedes')?.toArtifactId;
+    const finding = findingId ? store.get(findingId) : undefined;
+    return answer && finding ? [{ question: String(finding.content.question ?? ''), answer: String(answer.content.text ?? '') }] : [];
+  });
 
   // C1: section 3 is built from `content.liveFindings` alone — the findings that were
   // actually open (unresolved) when the verdict was recorded — never from `cites` (the
@@ -223,6 +230,22 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
     <p>Assessed, but left out of this decision:</p>
     <ul>${dropped.map((ref) => `<li>${esc(ref)}</li>`).join('')}</ul>
   </div>`
+      : ''
+  }
+
+  ${
+    assumptions.length
+      ? `<h2>Answered by accepting a suggested default</h2>
+  <p>These questions were answered by accepting the audit's suggestion as written. Nobody is
+  recorded as having reworded or reconsidered them.</p>
+  ${assumptions
+    .map(
+      (a: { question: string; answer: string }) => `<div class="q">
+        <div class="q-ask">${esc(a.question)}</div>
+        <p class="q-note">Answer: ${esc(a.answer)}</p>
+      </div>`,
+    )
+    .join('')}`
       : ''
   }
 

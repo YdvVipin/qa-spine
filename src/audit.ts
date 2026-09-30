@@ -98,6 +98,11 @@ export const AuditFinding = z.object({
   question: z.string().min(1).describe('What a human needs to answer to remove the ambiguity.'),
   confidence: z.enum(['high', 'medium', 'low', 'unknown']),
   severity: z.enum(['high', 'medium', 'low']).optional(),
+  suggestedAnswer: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('A sensible default a human can accept in one step. Accepting it is recorded as an assumption.'),
 });
 export type AuditFinding = z.infer<typeof AuditFinding>;
 
@@ -148,6 +153,8 @@ export function submitFindings(
     // deliberately left unlinted — it's a verbatim substring of the requirement, checked
     // just above, and linting it would make legitimate requirements unrecordable.
     assertPlainLanguage('question', f.question);
+    // Accepting a suggestion puts it on the brief word for word, so it gets the same lint.
+    if (f.suggestedAnswer !== undefined) assertPlainLanguage('suggestedAnswer', f.suggestedAnswer);
   }
 
   // promptVersion is the one provenance field the server can honestly author, and it is what
@@ -202,6 +209,7 @@ export function openQuestions(store: TraceStore, requirementId?: string) {
       quote: f.content.quote ?? null,
       question: f.content.question ?? null,
       confidence: f.content.confidence ?? null,
+      suggestedAnswer: f.content.suggestedAnswer ?? null,
       requirement: parent
         ? { id: parent.id, sourceRef: parent.sourceRef, text: String(parent.content.text ?? '') }
         : null,
@@ -220,7 +228,7 @@ export function openQuestions(store: TraceStore, requirementId?: string) {
  */
 export function recordAnswer(
   store: TraceStore,
-  input: { findingId: string; answer: string; provenance: Provenance },
+  input: { findingId: string; answer: string; provenance: Provenance; by?: string },
 ): Artifact {
   const finding = store.get(input.findingId);
   if (!finding) throw new Error(`no artifact with id ${input.findingId}`);
@@ -251,7 +259,13 @@ export function recordAnswer(
   return store.record({
     type: 'answer',
     sourceRef: requirement?.sourceRef ?? finding.sourceRef,
-    content: { text: answer },
+    content: {
+      text: answer,
+      // Accepting the audit's suggested default word for word is an assumption, not a
+      // decision someone thought through, and the brief says which answers were which.
+      ...(answer === String(finding.content.suggestedAnswer ?? '').trim() ? { assumption: true } : {}),
+      ...(input.by?.trim() ? { answeredBy: input.by.trim() } : {}),
+    },
     provenance: input.provenance,
     links: [
       { to: input.findingId, relation: 'supersedes' },

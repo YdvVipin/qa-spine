@@ -27,6 +27,7 @@ export type RiskSignal =
         quote: unknown;
         question: unknown;
         confidence: unknown;
+        suggestedAnswer: unknown;
       };
     }
   | {
@@ -117,6 +118,7 @@ export function assessReleaseRisk(
         quote: f.content.quote ?? null,
         question: f.content.question ?? null,
         confidence: f.content.confidence ?? null,
+        suggestedAnswer: f.content.suggestedAnswer ?? null,
       },
     })),
   );
@@ -302,6 +304,11 @@ export function recordVerdict(
   const liveFindings = signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail.findingId] : []));
   const failing = signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
   const liveTestRuns = [...new Set(failing.map((t) => t.testRunId))];
+  // Answers on the changed requirements that accepted a suggested default, so the brief can
+  // say which decisions rest on an assumption nobody reworded.
+  const assumptions = matched.requirements.flatMap((reqId) =>
+    store.linkedFrom(reqId, 'derived_from', 'answer').filter((a) => a.content.assumption === true).map((a) => a.id),
+  );
   const inVerdict = new Set(release.changed);
   const dropped = [...new Set((input.assessedChanged ?? []).map((r) => r.trim()).filter((r) => r && !inVerdict.has(r)))];
   if (input.verdict === 'ship' && signals.length && !overrideReason) {
@@ -373,6 +380,7 @@ export function recordVerdict(
       // Not refused — splitting a release into two decisions is legitimate — but recorded,
       // so a quietly narrowed list is visible instead of looking like a clean release.
       ...(dropped.length ? { droppedFromAssessment: dropped } : {}),
+      ...(assumptions.length ? { assumptions } : {}),
       // Requirements edited since they were last audited, as the refs a reader recognises.
       ...(suspect.length ? { suspect: [...new Set(suspect.map((s) => s.sourceRef ?? s.requirementId))] } : {}),
     },
