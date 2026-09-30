@@ -146,6 +146,7 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
 .q-src { margin-left: auto; }
 .q-quote { font-size: 13px; color: var(--dim); border-left: 2px solid var(--line); padding-left: 0.6rem; overflow-wrap: anywhere; }
 .q-ask { line-height: 1.5; }
+.q-suggest { display: flex; gap: .6rem; align-items: center; margin: .4rem 0; color: var(--dim, #666); flex-wrap: wrap; }
 .q-answer { display: flex; gap: 0.5rem; align-items: stretch; flex-wrap: wrap; }
 .q-answer textarea {
   flex: 1 1 18rem;

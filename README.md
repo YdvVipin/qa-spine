@@ -282,6 +282,25 @@ nothing in the record covered the change at all — a release where nothing matc
 a clean release, and reporting it as one would manufacture confidence the ledger never
 earned.
 
+### Answering questions
+
+A blocked gate says exactly how to unblock it. Each open question in its output comes with the
+command that answers it:
+
+```bash
+qa-spine answer finding_7be04f12 "Retry three times over an hour, then alert." --by a.rivera
+qa-spine answer finding_7be04f12 --accept-suggestion --by a.rivera
+```
+
+An audit may give each question a `suggestedAnswer`, a sensible default (plain-language lint
+applies, as for the question). It can be accepted in one step from the command line or the
+Inspector's audit queue. An answer that is the suggestion word for word is recorded as an
+**assumption**, and the brief lists those separately: a decision someone accepted is not the
+same as one someone thought through. `--by` is required on the command line.
+
+There is no separate `status` command: `qa-spine gate --changed PROJ-42` without `--record`
+writes nothing and prints the same summary.
+
 ### Edited requirements
 
 Tickets change. Recording a requirement whose `sourceRef` already exists (through
@@ -367,8 +386,10 @@ empty rather than reporting a clean release.
   gated types or retire a question; a narrowed release list is recorded. Done.
 - **Requirement versions.** Edited requirements supersede instead of duplicating, are
   flagged suspect until re-audited, and a clean audit is recorded. Done.
+- **Faster answers.** Suggested answers, `qa-spine answer`, and a gate summary that prints the
+  commands that unblock it. Done.
 - **Next — see [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).**
-  Faster answering, rubric measurement, coverage.
+  Rubric measurement, coverage, team features.
 - **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
 
 ## License

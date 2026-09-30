@@ -344,6 +344,8 @@ usage: qa-spine [subcommand]
   brief <verdictId>       render a release verdict as self-contained HTML
   audit-requirement <id>  load a requirement plus the ambiguity rubric
   audit-submit            record audit findings (JSON payload on stdin)
+  answer <findingId> <text> --by <name>
+                          answer an open question (--accept-suggestion to take its default)
   gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
   ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
@@ -363,6 +365,7 @@ const SUBCOMMANDS = new Set([
   'audit-requirement',
   'audit-submit',
   'gate',
+  'answer',
   'ingest-junit',
   'verify',
   'review-export',
@@ -564,6 +567,37 @@ if (invokedAsScript()) {
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 2;
+      }
+      break;
+    }
+
+    case 'answer': {
+      // For a person at a terminal, or following the command a blocked gate printed. The
+      // name is required: the Inspector's answers are anonymous because they need a browser
+      // on the machine, but a command line in CI is anyone who can edit a workflow.
+      try {
+        const { values, positionals } = parseArgs({
+          args: process.argv.slice(3),
+          options: { by: { type: 'string' }, 'accept-suggestion': { type: 'boolean' } },
+          allowPositionals: true,
+        });
+        const [findingId, text] = positionals;
+        if (!findingId) throw new Error('usage: qa-spine answer <findingId> <text> --by <name>');
+        if (!values.by?.trim()) throw new Error('--by is required: name who is answering');
+        const store = new TraceStore(path);
+        let answer = text ?? '';
+        if (values['accept-suggestion']) {
+          const suggestion = store.get(findingId)?.content.suggestedAnswer;
+          if (typeof suggestion !== 'string' || !suggestion.trim()) {
+            throw new Error(`finding ${findingId} has no suggested answer to accept`);
+          }
+          answer = suggestion;
+        }
+        const { recordAnswer } = await import('./audit.ts');
+        console.log(JSON.stringify(recordAnswer(store, { findingId, answer, provenance: { producer: 'human' }, by: values.by })));
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
       }
       break;
     }

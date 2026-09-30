@@ -41,6 +41,7 @@ export type GateResult = {
     quote: unknown;
     question: unknown;
     confidence: unknown;
+    suggestedAnswer: unknown;
   }[];
   /** Covering tests whose latest run failed. Separate from `signals` so existing readers of
    *  the JSON, which expect every signal to be a question, keep working. */
@@ -256,6 +257,12 @@ export function renderSummary(r: GateResult): string {
     for (const s of r.signals) {
       lines.push(bullet(`${s.sourceRef ?? 'no reference'} — ${String(s.question ?? '(no question recorded)')}`));
       if (s.quote) lines.push(`  > ${String(s.quote)}`);
+      if (s.suggestedAnswer) lines.push(`  Suggested: ${String(s.suggestedAnswer)}`);
+      // The exact command, so a red check says how to turn it green.
+      lines.push(`  Answer: \`qa-spine answer ${s.findingId} "<your answer>" --by <your name>\``);
+      if (s.suggestedAnswer) {
+        lines.push(`  Or accept the suggestion: \`qa-spine answer ${s.findingId} --accept-suggestion --by <your name>\``);
+      }
     }
     lines.push('');
   } else {
@@ -308,6 +315,14 @@ export function renderSummary(r: GateResult): string {
     if (r.unmatched.count > r.unmatched.sample.length) {
       lines.push(bullet(`…and ${r.unmatched.count - r.unmatched.sample.length} more`));
     }
+  }
+
+  if (!r.shippable && (r.signals.length || r.failingTests.length)) {
+    lines.push('');
+    lines.push(
+      'To ship anyway, a named person accepts the risk: add ' +
+        '`--override-reason "<why>" --approved-by <your name>` to the gate command.',
+    );
   }
 
   if (r.recorded) {

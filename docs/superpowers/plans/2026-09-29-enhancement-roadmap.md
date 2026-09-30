@@ -132,7 +132,7 @@ Size: **S** ≈ 1–2 days, **M** ≈ 3–5 days, **L** ≈ 1–2 weeks (one dev
 - `qa-spine answer <findingId> "text" --by <name>` CLI (today only MCP and the Inspector can answer).
 - The gate's PR comment lists each open question **with the exact command to answer it** and the exact override command. A red check should say how to turn it green.
 
-**I3. `qa-spine status [ref]`** (S)
+**I3. `qa-spine status [ref]`** (S) — *dropped 2026-09-29: `gate --changed <ref>` without `--record` is that command already.*
 - Plain-English summary for a ticket or release: open questions, suspect items, latest test results, last verdict. The terminal version of the brief, for developers.
 
 **I4. Release-readiness view + clarity score** (M, from Qase, requirements-analyzer)
@@ -185,7 +185,7 @@ project; that check is the countermeasure).
 | **M1 ✅** | Test results | JUnit spec as approved **+ R2 flaky handling** (spec amendment first) | L | Designed and next on the roadmap; flaky handling has to ship with it, not after |
 | **M2 ✅** | Trustworthy ledger | R3 hash chain + `verify`, R4 close gate holes | M | Small, and every later feature builds on the store being trustworthy |
 | **M3 ✅** | Requirements change | R1 versions + suspect links; importer update behaviour | M | Biggest correctness gap found in research; affects real use as soon as tickets are edited |
-| **M4** | Faster answers | I1 suggested answers, I2 `answer` CLI + actionable PR comment, I3 `status` | M | Adoption: once the gate blocks, the next thing users feel is how slow it is to unblock |
+| **M4 ✅** | Faster answers | I1 suggested answers, I2 `answer` CLI + actionable PR comment, I3 `status` | M | Adoption: once the gate blocks, the next thing users feel is how slow it is to unblock |
 | **M5** | Measurement | I5 `rubric-report`, then rubric `ambiguity/2` | M | Needs M4's answers and reviews to have data |
 | **M6** | Coverage + reporting | R5 coverage signal, I4 readiness view, I6 exports | M–L | Needs M1 test data |
 | **M7** | Teams | X1 bundle/merge, X2 importers, X3 MCP resources/prompts, R6 policy | M | Only matters once more than one person uses a store |

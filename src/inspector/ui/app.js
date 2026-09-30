@@ -1,7 +1,7 @@
 // Three views, hash-routed, no build step. Nodes are built with the DOM API rather than
 // innerHTML because everything rendered here is model output or requirement text.
 
-const TYPES = ['requirement', 'finding', 'answer', 'test_case', 'test_run', 'defect', 'verdict'];
+const TYPES = ['requirement', 'finding', 'answer', 'test_case', 'test_run', 'defect', 'verdict', 'audit'];
 const RELATION_COLOUR = {
   derived_from: '#7aa2f7',
   tests: '#7dcfff',
@@ -371,11 +371,11 @@ function questionCard(q) {
   });
   const status = h('span', { className: 'said' });
 
-  const submit = async () => {
+  const submit = async (answer = box.value) => {
     const res = await fetch('/api/answer', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ findingId: q.findingId, answer: box.value }),
+      body: JSON.stringify({ findingId: q.findingId, answer }),
     });
     if (res.ok) return route(); // answered questions leave the queue
     status.textContent = (await res.json()).error ?? 'failed';
@@ -411,9 +411,15 @@ function questionCard(q) {
     ),
     h('div', { className: 'q-quote' }, context),
     h('div', { className: 'q-ask' }, q.question ?? ''),
+    // Accepting sends the suggestion word for word, which the server records as an assumption.
+    q.suggestedAnswer
+      ? h('div', { className: 'q-suggest' },
+          h('span', {}, `Suggested: ${q.suggestedAnswer}`),
+          h('button', { textContent: 'Accept suggestion', onclick: () => submit(q.suggestedAnswer) }))
+      : null,
     h('div', { className: 'q-answer' },
       box,
-      h('button', { className: 'good', textContent: 'Record answer', onclick: submit }),
+      h('button', { className: 'good', textContent: 'Record answer', onclick: () => submit() }),
       status),
   );
 }
