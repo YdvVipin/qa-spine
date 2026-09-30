@@ -8,14 +8,15 @@ import { esc } from './brief.ts';
  * JSONL of every artifact and edge, a complete copy of the ledger.
  */
 
-const csvCell = (v: string) => `"${v.replaceAll('"', '""')}"`;
+/** Quoted, and a leading = + - @ defused with an apostrophe so a spreadsheet shows it as text. */
+const csvCell = (v: string) => `"${(/^[=+\-@\t\r]/.test(v) ? `'${v}` : v).replaceAll('"', '""')}"`;
 const yesNo = (b: boolean) => (b ? 'yes' : 'no');
 
 export function renderCsv(rows: RequirementStatus[]): string {
   const header = 'ref,status,open_questions,answered,assumptions,tests,failing,flaky,suspect,untested,text';
   const body = rows.map((r) =>
     [
-      r.sourceRef ?? r.requirementId,
+      csvCell(r.sourceRef ?? r.requirementId),
       r.status,
       r.open,
       r.answered,

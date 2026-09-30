@@ -119,7 +119,7 @@ test('export --format csv is a traceability matrix, one row per requirement', ()
   const lines = cli(['export', '--format', 'csv'], db).out.trim().split('\n');
   assert.equal(lines[0], 'ref,status,open_questions,answered,assumptions,tests,failing,flaky,suspect,untested,text');
   assert.equal(lines.length, 5);
-  assert.ok(lines.some((l) => l.startsWith('PROJ-3,blocked,0,0,0,1,1,0,yes,no,"New wording."')), lines.join('\n'));
+  assert.ok(lines.some((l) => l.startsWith('"PROJ-3",blocked,0,0,0,1,1,0,yes,no,"New wording."')), lines.join('\n'));
 }));
 
 test('export --format html is self-contained: no script, no external request', () => withDb((db) => {

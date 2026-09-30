@@ -78,6 +78,24 @@ function isHumanOrApproved(store: TraceStore, a: Artifact): boolean {
   return review?.content.verdict === 'good';
 }
 
+/**
+ * The findings on a requirement that are still open. Under the human-answers policy an AI
+ * answer does not retire a question until a person approves it, so those stay open, carrying
+ * the answer that awaits approval. The gate, the verdict, the readiness view and the exports
+ * all read open questions through here, so none of them can disagree with another.
+ */
+function openFindingsOn(store: TraceStore, reqId: string, requireHuman: boolean): { f: Artifact; awaiting: string | null }[] {
+  if (!requireHuman) return store.openFindings(500, reqId).map((f) => ({ f, awaiting: null }));
+  return store.linkedFrom(reqId, 'derived_from', 'finding').flatMap((f): { f: Artifact; awaiting: string | null }[] => {
+    const resolvers = store
+      .edgesTo(f.id)
+      .filter((e) => e.relation === 'supersedes')
+      .flatMap((e) => store.get(e.fromArtifactId) ?? []);
+    if (!resolvers.length) return [{ f, awaiting: null }];
+    return resolvers.some((r) => isHumanOrApproved(store, r)) ? [] : [{ f, awaiting: resolvers[0].id }];
+  });
+}
+
 /** Not replaced by a newer version of itself. */
 const isCurrent = (store: TraceStore, req: Artifact) => !store.linkedFrom(req.id, 'supersedes', 'requirement').length;
 
@@ -128,7 +146,12 @@ export type RequirementStatus = {
  * test), then warning (suspect or untested), then clear. The Inspector's readiness view and
  * the exports are both this list; neither decides anything the gate does not.
  */
-export function requirementStatus(store: TraceStore, changed?: string[]): RequirementStatus[] {
+export function requirementStatus(
+  store: TraceStore,
+  changed?: string[],
+  opts: { requireHumanAnswers?: boolean } = {},
+): RequirementStatus[] {
+  const requireHuman = opts.requireHumanAnswers ?? process.env.QA_SPINE_REQUIRE_HUMAN_ANSWERS === '1';
   const candidates = changed
     ? store.bySourceRef(changed).filter((a) => a.type === 'requirement')
     : store.list('requirement', 1e9);
@@ -140,7 +163,7 @@ export function requirementStatus(store: TraceStore, changed?: string[]): Requir
       const answers = versions.flatMap((v) => store.linkedFrom(v.id, 'derived_from', 'answer'));
       const tests = coveringTests(store, req);
       const runs = tests.map((tc) => store.linkedFrom(tc.id, 'verifies', 'test_run'));
-      const open = versions.reduce((n, v) => n + store.openFindings(500, v.id).length, 0);
+      const open = versions.reduce((n, v) => n + openFindingsOn(store, v.id, requireHuman).length, 0);
       const failing = runs.filter((r) => r[0] && BLOCKING_STATUS.has(String(r[0].content.status))).length;
       const suspect = isSuspect(store, req);
       const untested = tests.length === 0;
@@ -203,20 +226,8 @@ export function assessReleaseRisk(
   // `requirement: null`, so a broken edge cannot hide work from the audit queue — the two
   // modules read the same shape differently on purpose. Upgrade: surface orphaned findings
   // here too, as unresolved context rather than a blocking signal.
-  // Under the human-answers policy an AI answer does not retire a question until a person
-  // approves it, so those findings stay open, carrying the answer that awaits approval.
   const requireHuman = input.requireHumanAnswers ?? process.env.QA_SPINE_REQUIRE_HUMAN_ANSWERS === '1';
-  const openOn = (reqId: string): { f: Artifact; awaiting: string | null }[] =>
-    requireHuman
-      ? store.linkedFrom(reqId, 'derived_from', 'finding').flatMap((f): { f: Artifact; awaiting: string | null }[] => {
-          const resolvers = store
-            .edgesTo(f.id)
-            .filter((e) => e.relation === 'supersedes')
-            .flatMap((e) => store.get(e.fromArtifactId) ?? []);
-          if (!resolvers.length) return [{ f, awaiting: null }];
-          return resolvers.some((r) => isHumanOrApproved(store, r)) ? [] : [{ f, awaiting: resolvers[0].id }];
-        })
-      : store.openFindings(500, reqId).map((f) => ({ f, awaiting: null }));
+  const openOn = (reqId: string) => openFindingsOn(store, reqId, requireHuman);
 
   const findingSignals: RiskSignal[] = requirements.flatMap((req) =>
     openOn(req.id).map(({ f, awaiting }) => ({

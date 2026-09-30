@@ -57,6 +57,9 @@ export type GateResult = {
   suspect: { requirementId: string; sourceRef: string | null; previousIds: string[] }[];
   /** Changed requirements no test covers in any version. A warning unless --require-coverage. */
   untested: { requirementId: string; sourceRef: string | null }[];
+  /** Whether suspect / untested requirements are blocking this run, not just reported. */
+  suspectBlocking: boolean;
+  coverageBlocking: boolean;
   recorded: { verdictId: string; verdict: 'ship' | 'hold'; briefPath: string | null } | null;
 };
 
@@ -201,6 +204,8 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     flakyTests: assessment.flaky,
     suspect: assessment.suspect,
     untested: assessment.untested,
+    suspectBlocking,
+    coverageBlocking,
     recorded: null,
   };
 
@@ -316,7 +321,7 @@ export function renderSummary(r: GateResult): string {
     const n = r.suspect.length;
     lines.push(
       `**${n} requirement${n === 1 ? '' : 's'} changed since ${n === 1 ? 'it was' : 'they were'} last audited**` +
-        (r.shippable ? '' : ' — re-audit to clear; an override does not') + ':',
+        (r.suspectBlocking ? ' — re-audit to clear; an override does not' : '') + ':',
     );
     for (const s of r.suspect) lines.push(bullet(s.sourceRef ?? s.requirementId));
     lines.push('');
@@ -326,7 +331,7 @@ export function renderSummary(r: GateResult): string {
     const n = r.untested.length;
     lines.push(
       `**${n} changed requirement${n === 1 ? ' has' : 's have'} no tests**` +
-        (r.shippable ? '' : ' — add a test to clear; an override does not') + ':',
+        (r.coverageBlocking ? ' — add a test to clear; an override does not' : '') + ':',
     );
     for (const u of r.untested) lines.push(bullet(u.sourceRef ?? u.requirementId));
     lines.push('');
@@ -355,7 +360,8 @@ export function renderSummary(r: GateResult): string {
     }
   }
 
-  if (!r.shippable && (r.signals.length || r.failingTests.length)) {
+  // Only when an override would actually unblock: it cannot clear a suspect or untested block.
+  if (!r.shippable && (r.signals.length || r.failingTests.length) && !r.suspectBlocking && !r.coverageBlocking) {
     lines.push('');
     lines.push(
       'To ship anyway, a named person accepts the risk: add ' +

@@ -462,9 +462,9 @@ export class TraceStore {
   list(type?: Artifact['type'], limit = 100): Artifact[] {
     const rows = type
       ? this.db
-          .prepare('SELECT * FROM artifacts WHERE type = ? ORDER BY created_at DESC LIMIT ?')
+          .prepare('SELECT * FROM artifacts WHERE type = ? ORDER BY created_at DESC, rowid DESC LIMIT ?')
           .all(type, limit)
-      : this.db.prepare('SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?').all(limit);
+      : this.db.prepare('SELECT * FROM artifacts ORDER BY created_at DESC, rowid DESC LIMIT ?').all(limit);
     return (rows as Row[]).map(toArtifact);
   }
 

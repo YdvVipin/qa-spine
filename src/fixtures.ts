@@ -127,10 +127,13 @@ export function validateFixture(schema: Schema, value: unknown, locale: Locale, 
   }
   if (typeOf(value) === 'object') {
     const obj = value as Record<string, unknown>;
-    for (const key of schema.required ?? []) if (obj[key] === undefined) problems.push(`${path}.${key}: is required`);
+    // Own keys only: `constructor` or `toString` inherited from Object is not a field.
+    for (const key of schema.required ?? []) {
+      if (!Object.hasOwn(obj, key) || obj[key] === undefined) problems.push(`${path}.${key}: is required`);
+    }
     for (const [key, v] of Object.entries(obj)) {
       if (v === undefined) continue;
-      const sub = schema.properties?.[key];
+      const sub = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : undefined;
       if (sub) problems.push(...validateFixture(sub, v, locale, `${path}.${key}`));
       else if (schema.additionalProperties === false) problems.push(`${path}.${key}: is not allowed`);
     }
