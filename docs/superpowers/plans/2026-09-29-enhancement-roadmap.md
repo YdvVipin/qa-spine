@@ -182,8 +182,8 @@ project; that check is the countermeasure).
 | # | Milestone | Contains | Size | Why this order |
 |---|---|---|---|---|
 | **M0** | Housekeeping | Commit or discard the loose doc edits; commit `LICENSE`; refresh `PROJECT_STATUS.md`; merge `delivery-integration` → `main`; tag `v1` for the Action; npm publish (needs your OTP) | S | The README and examples already point at `@v1`, which doesn't exist yet |
-| **M1** | Test results | JUnit spec as approved **+ R2 flaky handling** (spec amendment first) | L | Designed and next on the roadmap; flaky handling has to ship with it, not after |
-| **M2** | Trustworthy ledger | R3 hash chain + `verify`, R4 close gate holes | M | Small, and every later feature builds on the store being trustworthy |
+| **M1 ✅** | Test results | JUnit spec as approved **+ R2 flaky handling** (spec amendment first) | L | Designed and next on the roadmap; flaky handling has to ship with it, not after |
+| **M2 ✅** | Trustworthy ledger | R3 hash chain + `verify`, R4 close gate holes | M | Small, and every later feature builds on the store being trustworthy |
 | **M3** | Requirements change | R1 versions + suspect links; importer update behaviour | M | Biggest correctness gap found in research; affects real use as soon as tickets are edited |
 | **M4** | Faster answers | I1 suggested answers, I2 `answer` CLI + actionable PR comment, I3 `status` | M | Adoption: once the gate blocks, the next thing users feel is how slow it is to unblock |
 | **M5** | Measurement | I5 `rubric-report`, then rubric `ambiguity/2` | M | Needs M4's answers and reviews to have data |
