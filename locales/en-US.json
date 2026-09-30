@@ -1,0 +1,10 @@
+{
+  "id": "en-US",
+  "version": "1",
+  "name": "English (United States)",
+  "currency": "USD",
+  "formats": {
+    "phone": "^(\\+1[ -]?)?\\(?\\d{3}\\)?[ .-]?\\d{3}[ .-]?\\d{4}$",
+    "postal-code": "^\\d{5}(-\\d{4})?$"
+  }
+}

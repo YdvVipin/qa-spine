@@ -1,0 +1,10 @@
+{
+  "id": "de-DE",
+  "version": "1",
+  "name": "German (Germany)",
+  "currency": "EUR",
+  "formats": {
+    "phone": "^(\\+49 ?|0)\\d{2,5}[ /-]?\\d{3,9}$",
+    "postal-code": "^\\d{5}$"
+  }
+}

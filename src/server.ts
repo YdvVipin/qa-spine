@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { TraceStore, assertRawRecordAllowed, recordRequirement } from './trace/store.ts';
+import { fixturesRequest, submitFixtures } from './fixtures.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
 import {
   auditRequirement,
@@ -72,6 +73,48 @@ export function createServer(store: TraceStore) {
         : `No requirement is recorded for ${sourceRef}. Record it first (trace_record with type ` +
           '"requirement" and its sourceRef), then audit it. Do not invent its text.';
       return { messages: [{ role: 'user', content: { type: 'text', text } }] };
+    },
+  );
+
+  server.registerTool(
+    'fixtures_request',
+    {
+      description:
+        'Load a locale pack (phone and postcode formats, currency) and instructions for generating ' +
+        'test data. Makes no model call: generate the data yourself, then record it with fixtures_submit.',
+      inputSchema: { locale: z.string().describe('e.g. en-US, en-GB, de-DE, en-IN.') },
+    },
+    ({ locale }) => {
+      try {
+        return json(fixturesRequest(locale));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'fixtures_submit',
+    {
+      description:
+        'Record generated test data for a test case or requirement. Every fixture is validated ' +
+        'against `schema` (a JSON Schema subset; unsupported keywords are refused) and the ' +
+        "locale's formats; one bad fixture rejects the submission. `promptVersion` is set by the " +
+        'server from the locale pack.',
+      inputSchema: {
+        schema: z.record(z.string(), z.unknown()).describe('The JSON Schema every fixture must satisfy.'),
+        locale: z.string(),
+        fixtures: z.array(z.unknown()).describe('The generated records.'),
+        forId: z.string().describe('The test case or requirement the data is for.'),
+        provenance: ProvenanceInput.describe('Who generated these. AI must give `model`.'),
+      },
+    },
+    (args) => {
+      try {
+        return json(submitFixtures(store, args as any));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
     },
   );
 
@@ -381,6 +424,8 @@ usage: qa-spine [subcommand]
   brief <verdictId>       render a release verdict as self-contained HTML
   audit-requirement <id>  load a requirement plus the ambiguity rubric
   audit-submit            record audit findings (JSON payload on stdin)
+  fixtures-request <loc>  load a locale pack for generating test data
+  fixtures-submit         record validated test data (JSON payload on stdin)
   approve <answerId> --by <name>
                           approve an AI answer (needed under --require-human-answers)
   answer <findingId> <text> --by <name>
@@ -407,6 +452,8 @@ const SUBCOMMANDS = new Set([
   'brief',
   'audit-requirement',
   'audit-submit',
+  'fixtures-request',
+  'fixtures-submit',
   'gate',
   'answer',
   'approve',
@@ -561,6 +608,36 @@ if (invokedAsScript()) {
       try {
         const store = new TraceStore(path);
         console.log(JSON.stringify(auditRequirement(store, id)));
+      } catch (err) {
+        console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        process.exitCode = 1;
+      }
+      break;
+    }
+
+    case 'fixtures-request': {
+      try {
+        console.log(JSON.stringify(fixturesRequest(process.argv[3] ?? ''), null, 2));
+      } catch (err) {
+        console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        process.exitCode = 1;
+      }
+      break;
+    }
+
+    case 'fixtures-submit': {
+      // Same conventions as audit-submit: JSON on stdin, errors as JSON on stdout, exit 1.
+      if (process.stdin.isTTY) {
+        console.log(JSON.stringify({ error: 'fixtures-submit reads a JSON payload on stdin; pipe one in' }));
+        process.exitCode = 1;
+        break;
+      }
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+        const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const recorded = submitFixtures(new TraceStore(path), { ...input, provenance: ProvenanceInput.parse(input.provenance) });
+        console.log(JSON.stringify(recorded));
       } catch (err) {
         console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
         process.exitCode = 1;

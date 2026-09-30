@@ -1,0 +1,10 @@
+{
+  "id": "en-IN",
+  "version": "1",
+  "name": "English (India)",
+  "currency": "INR",
+  "formats": {
+    "phone": "^(\\+91[ -]?)?[6-9]\\d{4}[ -]?\\d{5}$",
+    "postal-code": "^\\d{6}$"
+  }
+}

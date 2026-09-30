@@ -1,6 +1,6 @@
 # Fixtures: schema-validated test data with locale packs
 
-**Status:** implementing (roadmap X4)
+**Status:** implemented on `fixtures`
 **Date:** 2026-09-29
 **Branch:** `fixtures`, cut from `team-features`.
 

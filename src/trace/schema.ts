@@ -14,6 +14,8 @@ export const ArtifactType = z.enum([
   'answer',
   /** An audit that found nothing. Findings already show an audit happened; this shows a clean one did. */
   'audit',
+  /** Test data an agent generated for a test case or requirement, validated against a schema. */
+  'fixture',
 ]);
 
 /**

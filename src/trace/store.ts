@@ -86,6 +86,7 @@ const GATED: Partial<Record<Artifact['type'], string>> = {
   finding: 'audit_submit (it checks the quote is verbatim and the rule exists)',
   answer: 'audit_answer',
   audit: 'audit_submit',
+  fixture: 'fixtures_submit (it validates the data against its schema)',
   verdict: 'release_submit (it recomputes what blocks the release)',
 };
 
@@ -114,7 +115,7 @@ export function assertRawRecordAllowed(
 }
 
 /** JSON with object keys sorted, so `{a, b}` and `{b, a}` compare equal. */
-const canonical = (value: unknown): string =>
+export const canonical = (value: unknown): string =>
   JSON.stringify(value, (_key, v) =>
     v && typeof v === 'object' && !Array.isArray(v)
       ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))

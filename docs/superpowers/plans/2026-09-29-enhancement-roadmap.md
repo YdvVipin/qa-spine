@@ -189,7 +189,7 @@ project; that check is the countermeasure).
 | **M5 ✅** | Measurement | I5 `rubric-report`, then rubric `ambiguity/2` | M | Needs M4's answers and reviews to have data |
 | **M6 ✅** | Coverage + reporting | R5 coverage signal, I4 readiness view, I6 exports | M–L | Needs M1 test data |
 | **M7 ✅** | Teams | X1 bundle/merge, X2 importers, X3 MCP resources/prompts, R6 policy | M | Only matters once more than one person uses a store |
-| **Later** | `generate_fixtures` | X4 | L | |
+| **Later ✅** | `generate_fixtures` | X4 | L | |
 
 ### Acceptance checks per milestone
 

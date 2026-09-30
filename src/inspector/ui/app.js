@@ -1,7 +1,7 @@
 // Three views, hash-routed, no build step. Nodes are built with the DOM API rather than
 // innerHTML because everything rendered here is model output or requirement text.
 
-const TYPES = ['requirement', 'finding', 'answer', 'test_case', 'test_run', 'defect', 'verdict', 'audit'];
+const TYPES = ['requirement', 'finding', 'answer', 'test_case', 'test_run', 'defect', 'verdict', 'audit', 'fixture'];
 const RELATION_COLOUR = {
   derived_from: '#7aa2f7',
   tests: '#7dcfff',

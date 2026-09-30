@@ -1,0 +1,10 @@
+{
+  "id": "en-GB",
+  "version": "1",
+  "name": "English (United Kingdom)",
+  "currency": "GBP",
+  "formats": {
+    "phone": "^(\\+44 ?|0)\\d{2,4} ?\\d{3,4} ?\\d{3,4}$",
+    "postal-code": "^[A-Z]{1,2}\\d[A-Z\\d]? ?\\d[A-Z]{2}$"
+  }
+}

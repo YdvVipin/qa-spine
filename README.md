@@ -55,6 +55,8 @@ npm run build
 | `audit_open` | Lists ambiguity questions still waiting on an answer, each with the requirement text needed to answer it. |
 | `audit_answer` | Records an answer. The answer supersedes the finding, which retires it. |
 | `assess_release_risk` | Given the areas a release touches, returns every unresolved requirement-stage finding and every failing covering test on them, plus surrounding artifacts as unscored evidence. Makes no model call. |
+| `fixtures_request` | Returns a locale pack (phone and postcode formats, currency) and instructions for generating test data. Makes no model call. |
+| `fixtures_submit` | Records generated test data for a test case or requirement, after validating every record against a JSON Schema and the locale. One bad record rejects the batch. |
 | `release_submit` | Records a release verdict. Recomputes the signals itself from `changed` rather than trusting the caller's, and refuses a `ship` while one is live unless given an explicit `override` reason. |
 
 ## The Inspector
@@ -93,7 +95,7 @@ made the agents better or worse.
 
 ## The trace store
 
-Artifacts are `requirement | finding | test_case | test_run | defect | verdict | review | answer | audit`. Edges are
+Artifacts are `requirement | finding | test_case | test_run | defect | verdict | review | answer | audit | fixture`. Edges are
 `derived_from | tests | covers | verifies | contradicts | supersedes`, always directed from
 the newer artifact to the older one.
 
@@ -245,6 +247,25 @@ qa-spine merge ../teammate/.qa-spine/trace.db
 brings in every artifact and edge the other store has and this one lacks, with their ids and
 times, chained here. The other store must pass `verify`; an id both stores hold with different
 content refuses the whole merge. Merging twice changes nothing, and the source is never written.
+
+### Test data
+
+The agent generates fixtures; qa-spine checks them, as it does findings.
+
+```bash
+qa-spine fixtures-request de-DE                 # the locale pack and the instructions
+echo '{"schema":{…},"locale":"de-DE","fixtures":[…],"forId":"test_case_a41f09b2","provenance":{…}}' \
+  | qa-spine fixtures-submit
+```
+
+Every record is validated against the caller's JSON Schema and the locale pack: a German
+postcode is five digits, a UK one looks like `SW1A 1AA`. The schema support is a stated subset —
+`type`, `properties`, `required`, `additionalProperties: false`, `items`, `enum`, `const`,
+min/max, lengths, `pattern`, and the formats `email`, `date`, `date-time`, `uuid`, `phone`,
+`postal-code`. **Any other keyword refuses the schema** rather than being skipped: a validator
+that ignored `oneOf` would pass data that breaks it. Packs ship for `en-US`, `en-GB`, `de-DE` and
+`en-IN` in `locales/`; point `QA_SPINE_LOCALES` at your own. The recorded `fixture` carries the
+schema's digest and the pack's version as its `promptVersion`.
 
 ### Over MCP
 
@@ -466,7 +487,8 @@ empty rather than reporting a clean release.
   Inspector's readiness view. Done.
 - **Team features.** `merge`, GitHub and Linear importers, the rubric and an audit prompt
   over MCP, and optional human approval of AI answers. Done.
-- **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
+- **Test data.** `fixtures_request` / `fixtures_submit`: schema-validated fixtures with locale
+  packs. Done. That completes [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).
 
 ## License
 
