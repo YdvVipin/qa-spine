@@ -24,6 +24,8 @@ export type GateOptions = {
   blockOnSuspect?: boolean;
   /** Block while a changed requirement has no test covering it. Off by default. */
   requireCoverage?: boolean;
+  /** An AI answer retires a question only once a person approves it. Default: the env var. */
+  requireHumanAnswers?: boolean;
   cwd?: string;
   /** Passed in rather than imported: VERSION lives in server.ts, which imports this module. */
   toolVersion?: string;
@@ -44,6 +46,7 @@ export type GateResult = {
     question: unknown;
     confidence: unknown;
     suggestedAnswer: unknown;
+    awaitingApproval: string | null;
   }[];
   /** Covering tests whose latest run failed. Separate from `signals` so existing readers of
    *  the JSON, which expect every signal to be a question, keep working. */
@@ -163,7 +166,11 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     throw new GateError('the trace store is empty — check QA_SPINE_DB points at a real store');
   }
 
-  const assessment = assessReleaseRisk(store, { changed, releaseRef: opts.releaseRef });
+  const assessment = assessReleaseRisk(store, {
+    changed,
+    releaseRef: opts.releaseRef,
+    requireHumanAnswers: opts.requireHumanAnswers,
+  });
   const signals = assessment.signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail] : []));
   // One entry per failing run: a test covering two changed requirements is one failing test,
   // named against the first of them, not two.
@@ -224,6 +231,7 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     // Only when it overrides something. recordVerdict rejects an override alongside a hold,
     // and discards one that overrode nothing.
     override: overriding && verdict === 'ship' ? { reason: opts.overrideReason! } : undefined,
+    requireHumanAnswers: opts.requireHumanAnswers,
     provenance: {
       producer: 'tool',
       tool: TOOL,
@@ -273,6 +281,10 @@ export function renderSummary(r: GateResult): string {
     for (const s of r.signals) {
       lines.push(bullet(`${s.sourceRef ?? 'no reference'} — ${String(s.question ?? '(no question recorded)')}`));
       if (s.quote) lines.push(`  > ${String(s.quote)}`);
+      if (s.awaitingApproval) {
+        lines.push(`  Answered by AI, awaiting a person's approval: \`qa-spine approve ${s.awaitingApproval} --by <your name>\``);
+        continue;
+      }
       if (s.suggestedAnswer) lines.push(`  Suggested: ${String(s.suggestedAnswer)}`);
       // The exact command, so a red check says how to turn it green.
       lines.push(`  Answer: \`qa-spine answer ${s.findingId} "<your answer>" --by <your name>\``);

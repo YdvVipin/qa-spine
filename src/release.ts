@@ -28,6 +28,8 @@ export type RiskSignal =
         question: unknown;
         confidence: unknown;
         suggestedAnswer: unknown;
+        /** An AI answer that would retire this question once a person approves it. */
+        awaitingApproval: string | null;
       };
     }
   | {
@@ -64,6 +66,16 @@ export function isFlaky(runs: Artifact[]): boolean {
   return [...byCommit.values()].some(
     (s) => s.has('passed') && [...s].some((status) => BLOCKING_STATUS.has(status)),
   );
+}
+
+/**
+ * Counts as a person's answer: not produced by AI, or an AI artifact whose latest review by a
+ * person is a thumbs-up (the Inspector's 👍, or `qa-spine approve`).
+ */
+function isHumanOrApproved(store: TraceStore, a: Artifact): boolean {
+  if (a.provenance.producer !== 'ai') return true;
+  const review = store.linkedFrom(a.id, 'reviews', 'review').find((r) => r.provenance.producer === 'human');
+  return review?.content.verdict === 'good';
 }
 
 /** Not replaced by a newer version of itself. */
@@ -167,7 +179,7 @@ export function requirementStatus(store: TraceStore, changed?: string[]): Requir
  */
 export function assessReleaseRisk(
   store: TraceStore,
-  input: { changed: string[]; releaseRef?: string },
+  input: { changed: string[]; releaseRef?: string; requireHumanAnswers?: boolean },
 ) {
   const changed = [...new Set(input.changed.map((r) => r.trim()).filter((r) => r))];
   if (!changed.length) throw new Error('changed must not be empty');
@@ -191,8 +203,23 @@ export function assessReleaseRisk(
   // `requirement: null`, so a broken edge cannot hide work from the audit queue — the two
   // modules read the same shape differently on purpose. Upgrade: surface orphaned findings
   // here too, as unresolved context rather than a blocking signal.
+  // Under the human-answers policy an AI answer does not retire a question until a person
+  // approves it, so those findings stay open, carrying the answer that awaits approval.
+  const requireHuman = input.requireHumanAnswers ?? process.env.QA_SPINE_REQUIRE_HUMAN_ANSWERS === '1';
+  const openOn = (reqId: string): { f: Artifact; awaiting: string | null }[] =>
+    requireHuman
+      ? store.linkedFrom(reqId, 'derived_from', 'finding').flatMap((f): { f: Artifact; awaiting: string | null }[] => {
+          const resolvers = store
+            .edgesTo(f.id)
+            .filter((e) => e.relation === 'supersedes')
+            .flatMap((e) => store.get(e.fromArtifactId) ?? []);
+          if (!resolvers.length) return [{ f, awaiting: null }];
+          return resolvers.some((r) => isHumanOrApproved(store, r)) ? [] : [{ f, awaiting: resolvers[0].id }];
+        })
+      : store.openFindings(500, reqId).map((f) => ({ f, awaiting: null }));
+
   const findingSignals: RiskSignal[] = requirements.flatMap((req) =>
-    store.openFindings(500, req.id).map((f) => ({
+    openOn(req.id).map(({ f, awaiting }) => ({
       kind: 'unresolved_finding_on_changed_area' as const,
       artifacts: [f.id, req.id],
       detail: {
@@ -204,6 +231,7 @@ export function assessReleaseRisk(
         question: f.content.question ?? null,
         confidence: f.content.confidence ?? null,
         suggestedAnswer: f.content.suggestedAnswer ?? null,
+        awaitingApproval: awaiting,
       },
     })),
   );
@@ -356,6 +384,8 @@ export function recordVerdict(
     provenance: Provenance;
     /** The `changed` of an earlier assessment of this release, when the caller has one. */
     assessedChanged?: string[];
+    /** AI answers retire a question only once a person approves them. Default: the env var. */
+    requireHumanAnswers?: boolean;
   },
 ): Artifact {
   const releaseRef = input.releaseRef.trim();
@@ -385,7 +415,10 @@ export function recordVerdict(
     throw new Error('override is only meaningful with a ship verdict');
   }
 
-  const { release, signals, matched, suspect, untested } = assessReleaseRisk(store, { changed: input.changed });
+  const { release, signals, matched, suspect, untested } = assessReleaseRisk(store, {
+    changed: input.changed,
+    requireHumanAnswers: input.requireHumanAnswers,
+  });
   const liveFindings = signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail.findingId] : []));
   const failing = signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
   const liveTestRuns = [...new Set(failing.map((t) => t.testRunId))];

@@ -11,6 +11,7 @@ import { TraceStore, assertRawRecordAllowed, recordRequirement } from './trace/s
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
 import {
   auditRequirement,
+  loadRubric,
   submitFindings,
   AuditFinding,
   openQuestions,
@@ -37,6 +38,42 @@ export function createServer(store: TraceStore) {
   // ponytail: per session and in memory — an assessment from another session is not seen.
   // Upgrade: record assessments in the ledger, if narrowing across sessions becomes a pattern.
   const assessed = new Map<string, string[]>();
+
+  // The rubric as a resource and the audit as a prompt, so a client can show both in its
+  // menus without the person knowing any tool names.
+  server.registerResource(
+    'ambiguity-rubric',
+    'qa-spine://rubrics/ambiguity',
+    {
+      title: 'Ambiguity rubric',
+      description: 'The published rules an audit applies. Its version is stamped on every finding.',
+      mimeType: 'application/json',
+    },
+    (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(loadRubric(), null, 2) }] }),
+  );
+
+  server.registerPrompt(
+    'audit-ticket',
+    {
+      title: 'Audit a ticket for ambiguity',
+      description: 'Check a recorded requirement against the rubric and record what you find.',
+      argsSchema: { sourceRef: z.string().describe('The ticket key, e.g. PROJ-42.') },
+    },
+    ({ sourceRef }) => {
+      const current = store
+        .bySourceRef([sourceRef])
+        .filter((a) => a.type === 'requirement' && !store.linkedFrom(a.id, 'supersedes', 'requirement').length)
+        .at(-1);
+      const text = current
+        ? `Audit requirement ${current.id} (${sourceRef}) for ambiguity. Call audit_requirement with ` +
+          `requirementId "${current.id}", apply every rule in the rubric it returns, then record the result ` +
+          'with audit_submit — an empty findings list if no rule fires. Ask questions for a person; never ' +
+          'rewrite the requirement. Where a sensible default exists, include suggestedAnswer.'
+        : `No requirement is recorded for ${sourceRef}. Record it first (trace_record with type ` +
+          '"requirement" and its sourceRef), then audit it. Do not invent its text.';
+      return { messages: [{ role: 'user', content: { type: 'text', text } }] };
+    },
+  );
 
   server.registerTool(
     'health',
@@ -344,6 +381,8 @@ usage: qa-spine [subcommand]
   brief <verdictId>       render a release verdict as self-contained HTML
   audit-requirement <id>  load a requirement plus the ambiguity rubric
   audit-submit            record audit findings (JSON payload on stdin)
+  approve <answerId> --by <name>
+                          approve an AI answer (needed under --require-human-answers)
   answer <findingId> <text> --by <name>
                           answer an open question (--accept-suggestion to take its default)
   gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
@@ -369,6 +408,7 @@ const SUBCOMMANDS = new Set([
   'audit-submit',
   'gate',
   'answer',
+  'approve',
   'ingest-junit',
   'verify',
   'review-export',
@@ -566,6 +606,7 @@ if (invokedAsScript()) {
             json: { type: 'boolean' },
             'block-on-suspect': { type: 'boolean' },
             'require-coverage': { type: 'boolean' },
+            'require-human-answers': { type: 'boolean' },
           },
           allowPositionals: false,
         });
@@ -591,6 +632,7 @@ if (invokedAsScript()) {
           briefPath: values.brief,
           blockOnSuspect: values['block-on-suspect'],
           requireCoverage: values['require-coverage'],
+          requireHumanAnswers: values['require-human-answers'] || undefined,
           toolVersion: VERSION,
         });
         // --summary writes the Markdown while stdout stays JSON. Without it a caller that
@@ -602,6 +644,38 @@ if (invokedAsScript()) {
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 2;
+      }
+      break;
+    }
+
+    case 'approve': {
+      // A person's thumbs-up on an AI answer, from the terminal: the same review the Inspector
+      // records, with a name on it. Only answers can be approved; it is what the policy reads.
+      try {
+        const { values, positionals } = parseArgs({
+          args: process.argv.slice(3),
+          options: { by: { type: 'string' } },
+          allowPositionals: true,
+        });
+        const [answerId] = positionals;
+        if (!answerId) throw new Error('usage: qa-spine approve <answerId> --by <name>');
+        if (!values.by?.trim()) throw new Error('--by is required: name who is approving');
+        const store = new TraceStore(path);
+        const answer = store.get(answerId);
+        if (answer?.type !== 'answer') throw new Error(`${answerId} is not an answer`);
+        console.log(
+          JSON.stringify(
+            store.record({
+              type: 'review',
+              content: { verdict: 'good', note: `approved by ${values.by.trim()}` },
+              provenance: { producer: 'human', approvedBy: values.by.trim(), approvedAt: new Date().toISOString() },
+              links: [{ to: answerId, relation: 'reviews' }],
+            }),
+          ),
+        );
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
       }
       break;
     }
