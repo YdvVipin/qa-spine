@@ -146,3 +146,44 @@ test('a rolled-back transaction leaves no chain rows behind', () => {
   assert.equal(r.ok, true, JSON.stringify(r.problems));
   assert.equal(r.chained, 5);
 });
+
+test('a row inserted with a rowid below 1 is not mistaken for a legacy row', () => withDb((db) => {
+  seed(new TraceStore(db));
+  raw(db, `INSERT INTO artifacts(rowid, id, type, source_ref, content, provenance, created_at)
+           VALUES (-1, 'verdict_deadbeef', 'verdict', NULL, '{}', '{"producer":"human"}', '2026-01-01T00:00:00.000Z')`);
+  const r = new TraceStore(db).verify();
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.problems, [{ kind: 'artifact', ref: 'verdict_deadbeef', problem: 'not written by qa-spine' }]);
+}));
+
+test('a row slipped into a gap in the legacy range is found', () => withDb((db) => {
+  legacyStore(db);
+  raw(db, `INSERT INTO artifacts(rowid, id, type, source_ref, content, provenance, created_at)
+           VALUES (5, 'requirement_0000000c', 'requirement', NULL, '{}', '{"producer":"human"}', '2026-01-01T00:00:00.000Z')`);
+  new TraceStore(db).record({ type: 'requirement', content: { text: 'new' }, provenance: human });
+  raw(db, `INSERT INTO artifacts(rowid, id, type, source_ref, content, provenance, created_at)
+           VALUES (4, 'answer_0000000d', 'answer', NULL, '{}', '{"producer":"human"}', '2026-01-01T00:00:00.000Z')`);
+  const r = new TraceStore(db).verify();
+  assert.equal(r.ok, false);
+  assert.match(r.problems.map((p) => p.problem).join(), /added among the rows from before the chain/);
+}));
+
+test('a chain that was wiped is reported, not taken for a legacy store', () => withDb((db) => {
+  seed(new TraceStore(db));
+  raw(db, 'DROP TRIGGER chain_no_delete');
+  raw(db, 'DELETE FROM chain');
+  const r = new TraceStore(db).verify();
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.problems, [{ kind: 'chain', ref: 'chain', problem: 'the hash chain was removed' }]);
+}));
+
+test('a first write that rolls back leaves the store unmarked, not "chain removed"', () => withDb((db) => {
+  const store = new TraceStore(db);
+  assert.throws(() =>
+    store.transaction(() => {
+      store.record({ type: 'requirement', content: { text: 'x' }, provenance: human });
+      throw new Error('boom');
+    }),
+  );
+  assert.deepEqual(store.verify(), { ok: true, chained: 0, legacy: 0, head: null, problems: [] });
+}));

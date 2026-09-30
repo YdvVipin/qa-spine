@@ -180,3 +180,28 @@ test('one malformed report means nothing from any report is written', () => {
   /bad\.xml/);
   assert.equal(store.list().length, 1);
 });
+
+test('ingest waits for another writer instead of failing at once', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawn } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'qa-spine-lock-'));
+  try {
+    const db = join(dir, 'trace.db');
+    const store = new TraceStore(db);
+    store.record({ type: 'requirement', sourceRef: 'PROJ-42', content: { text: 'r' }, provenance: human });
+    // Another process takes the write lock, says so, holds it briefly, then commits.
+    const holder = spawn('node', ['-e', `
+      const { DatabaseSync } = require('node:sqlite');
+      const d = new DatabaseSync(${JSON.stringify(db)});
+      d.exec('BEGIN IMMEDIATE'); console.log('locked');
+      setTimeout(() => { d.exec('COMMIT'); d.close(); }, 400);`]);
+    await new Promise<void>((resolve) => holder.stdout.once('data', () => resolve()));
+    const result = ingestJunit(store, { reports: [{ file: 'j.xml', xml: report('<testcase classname="a" name="PROJ-42 t"/>') }] });
+    assert.equal(result.runs.length, 1);
+    await new Promise((resolve) => holder.once('exit', resolve));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -62,6 +62,8 @@ CREATE TRIGGER IF NOT EXISTS chain_no_delete BEFORE DELETE ON chain
  * Upgrade: sign the head, or record it in the verdict and publish it with the brief.
  */
 const GENESIS_PREV = '0'.repeat(64);
+/** `PRAGMA user_version` once a store has started chaining. */
+const CHAINED = 1;
 const chainHash = (prev: string, payload: string) => createHash('sha256').update(prev).update(payload).digest('hex');
 const artifactPayload = (r: Row) =>
   JSON.stringify(['artifact', r.id, r.type, r.source_ref, r.content, r.provenance, r.created_at]);
@@ -190,9 +192,14 @@ export class TraceStore {
     return artifact;
   }
 
-  /** Runs `fn` in one transaction: every record and link inside it lands, or none does. */
+  /**
+   * Runs `fn` in one transaction: every record and link inside it lands, or none does.
+   * IMMEDIATE takes the write lock up front. A deferred transaction that reads first and
+   * then writes cannot wait for another writer — SQLite fails the upgrade at once rather than
+   * risk a deadlock, and busy_timeout never applies.
+   */
   transaction<T>(fn: () => T): T {
-    this.db.exec('BEGIN');
+    this.db.exec('BEGIN IMMEDIATE');
     try {
       const result = fn();
       this.db.exec('COMMIT');
@@ -243,12 +250,22 @@ export class TraceStore {
     let prev = (this.db.prepare('SELECT hash FROM chain ORDER BY seq DESC LIMIT 1').get() as { hash: string } | undefined)
       ?.hash;
     if (!prev) {
-      // Highest rowid each table had before this row: everything at or below is legacy.
+      // The highest rowid and the row count each table had before this row. Everything at or
+      // below the rowid is legacy; the count is what shows a row later slipped in among them.
       const mark = (table: 'artifacts' | 'edges', own: number | bigint) =>
-        (this.db.prepare(`SELECT coalesce(max(rowid), 0) AS m FROM ${table} WHERE rowid <> ?`).get(own) as { m: number }).m;
-      const watermarks = `${mark('artifacts', kind === 'artifact' ? ownRowid : -1)}:${mark('edges', kind === 'edge' ? ownRowid : -1)}`;
+        this.db.prepare(`SELECT coalesce(max(rowid), 0) AS m, count(*) AS n FROM ${table} WHERE rowid <> ?`).get(own) as {
+          m: number;
+          n: number;
+        };
+      const a = mark('artifacts', kind === 'artifact' ? ownRowid : -1);
+      const e = mark('edges', kind === 'edge' ? ownRowid : -1);
+      const watermarks = `${a.m}:${e.m}:${a.n}:${e.n}`;
       prev = chainHash(GENESIS_PREV, JSON.stringify(['genesis', watermarks]));
       insert.run('genesis', watermarks, prev);
+      // Marks the file as chained, so a chain wiped later reads as removed, not as a legacy
+      // store. Transactional: rolled back with the write that set it.
+      // ponytail: a speed bump — someone who knows can reset it too. Same ceiling as the chain.
+      this.db.exec(`PRAGMA user_version = ${CHAINED}`);
     }
     insert.run(kind, ref, chainHash(prev, payload));
   }
@@ -264,20 +281,24 @@ export class TraceStore {
       (this.db.prepare(`SELECT count(*) AS n FROM ${table} WHERE rowid ${above ? '>' : '<='} ?`).get(mark) as { n: number }).n;
 
     if (!chain.length) {
-      const all = countAbove('artifacts', -1, true) + countAbove('edges', -1, true);
+      const all = countAbove('artifacts', -Infinity, true) + countAbove('edges', -Infinity, true);
+      const version = (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+      if (version >= CHAINED) {
+        return { ok: false, chained: 0, legacy: 0, head: null, problems: [{ kind: 'chain', ref: 'chain', problem: 'the hash chain was removed' }] };
+      }
       return { ok: true, chained: 0, legacy: all, head: null, problems: [] };
     }
 
     const problems: VerifyProblem[] = [];
     const chainedArtifacts = new Set<string>();
     const chainedEdges = new Set<string>();
-    let [artifactMark, edgeMark] = [0, 0];
+    let [artifactMark, edgeMark, artifactLegacy, edgeLegacy] = [0, 0, 0, 0];
     let prev = GENESIS_PREV;
 
     for (const link of chain) {
       let payload: string | undefined;
       if (link.kind === 'genesis') {
-        [artifactMark, edgeMark] = link.ref.split(':').map(Number);
+        [artifactMark, edgeMark, artifactLegacy, edgeLegacy] = link.ref.split(':').map(Number);
         payload = JSON.stringify(['genesis', link.ref]);
       } else if (link.kind === 'artifact') {
         chainedArtifacts.add(link.ref);
@@ -302,10 +323,11 @@ export class TraceStore {
     }
 
     const unchained = [
-      ...(this.db.prepare('SELECT id FROM artifacts WHERE rowid > ?').all(artifactMark) as { id: string }[])
+      // SQLite assigns rowids from 1 up, so one below 1 was chosen by whoever inserted it.
+      ...(this.db.prepare('SELECT id FROM artifacts WHERE rowid > ? OR rowid < 1').all(artifactMark) as { id: string }[])
         .filter((r) => !chainedArtifacts.has(r.id))
         .map((r) => ({ kind: 'artifact', ref: r.id })),
-      ...(this.db.prepare('SELECT from_id, to_id, relation FROM edges WHERE rowid > ?').all(edgeMark) as {
+      ...(this.db.prepare('SELECT from_id, to_id, relation FROM edges WHERE rowid > ? OR rowid < 1').all(edgeMark) as {
         from_id: string;
         to_id: string;
         relation: string;
@@ -316,10 +338,20 @@ export class TraceStore {
     ];
     for (const u of unchained) problems.push({ ...u, problem: 'not written by qa-spine' });
 
+    const inLegacyRange = (table: 'artifacts' | 'edges', mark: number) =>
+      (this.db.prepare(`SELECT count(*) AS n FROM ${table} WHERE rowid BETWEEN 1 AND ?`).get(mark) as { n: number }).n;
+    const legacyArtifacts = inLegacyRange('artifacts', artifactMark);
+    const legacyEdges = inLegacyRange('edges', edgeMark);
+    for (const [table, found, expected] of [['artifacts', legacyArtifacts, artifactLegacy], ['edges', legacyEdges, edgeLegacy]] as const) {
+      if (found > expected) {
+        problems.push({ kind: table, ref: table, problem: `${found - expected} row(s) added among the rows from before the chain` });
+      }
+    }
+
     return {
       ok: problems.length === 0,
       chained: chain.length - 1,
-      legacy: countAbove('artifacts', artifactMark, false) + countAbove('edges', edgeMark, false),
+      legacy: Math.min(legacyArtifacts, artifactLegacy) + Math.min(legacyEdges, edgeLegacy),
       head: prev,
       problems,
     };

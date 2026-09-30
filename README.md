@@ -110,7 +110,8 @@ no store. The GitHub Action runs it before the gate. Rows written by a qa-spine 
 chain are counted as `legacy`, never as tampering, so upgrading cannot turn a build red.
 
 The limit is stated rather than hidden: nothing anchors the chain outside the file, so someone
-who understands it can rewrite a row and recompute every hash after it. `verify` prints the
+who understands it can rewrite a row and recompute every hash after it, or wipe the chain and
+reset the file's `user_version` marker so the store passes for a pre-chain one. `verify` prints the
 `head` hash so you can anchor it somewhere you already trust — a CI log, a release note. A
 store committed to git is anchored by git.
 
