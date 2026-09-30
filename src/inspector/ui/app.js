@@ -482,12 +482,61 @@ async function auditView(show) {
 
 // ------------------------------------------------------------------ routing
 
+// ---------------------------------------------------------------- readiness view
+
+/**
+ * Where each requirement stands, worst first — the gate's view of the store, before anyone
+ * runs the gate. Optionally narrowed to the refs a change touches. Decides nothing itself.
+ */
+async function readinessView(changed) {
+  const box = h('input', {
+    value: changed ?? '',
+    placeholder: 'refs a change touches, e.g. PROJ-42, src/refunds.ts — empty for all',
+    ariaLabel: 'changed refs',
+    size: 60,
+  });
+  const apply = () => (location.hash = box.value.trim() ? `#/readiness?changed=${encodeURIComponent(box.value.trim())}` : '#/readiness');
+  box.onkeydown = (e) => e.key === 'Enter' && apply();
+  const bar = h('div', { className: 'filters' }, box, h('button', { textContent: 'show', onclick: apply }));
+
+  const { rows } = await get('/api/readiness' + (changed ? `?changed=${encodeURIComponent(changed)}` : ''));
+  const count = (s) => rows.filter((r) => r.status === s).length;
+  crumbs.replaceChildren(`${count('blocked')} blocked · ${count('warning')} need attention · ${count('clear')} clear`);
+  if (!rows.length) return view.replaceChildren(bar, h('p', { className: 'empty' }, 'No requirements match.'));
+
+  const notes = (r) =>
+    [
+      r.open && `${r.open} open question${r.open === 1 ? '' : 's'}`,
+      r.failing && `${r.failing} failing`,
+      r.flaky && `${r.flaky} flaky`,
+      r.suspect && 'edited since audit',
+      r.untested && 'no tests',
+      r.assumptions && `${r.assumptions} assumption${r.assumptions === 1 ? '' : 's'}`,
+    ].filter(Boolean).join(' · ');
+  view.replaceChildren(
+    bar,
+    h('table', {},
+      h('thead', {}, h('tr', {}, ['requirement', 'status', 'tests', 'answered', 'notes'].map((c) => h('th', {}, c)))),
+      h('tbody', {}, rows.map((r) =>
+        h('tr', {},
+          h('td', {}, h('a', { href: `#/c/${r.requirementId}`, textContent: r.sourceRef ?? r.requirementId })),
+          h('td', { className: `ready-${r.status}` }, r.status),
+          h('td', {}, String(r.tests)),
+          h('td', {}, String(r.answered)),
+          h('td', {}, notes(r)),
+        ),
+      )),
+    ),
+  );
+}
+
 function route() {
   const query = new URLSearchParams(location.hash.split('?')[1] ?? '');
   const [, path, id] = location.hash.match(/^#\/(a|c)\/(.+)$/) ?? [];
   if (path === 'a') return detailView(decodeURIComponent(id));
   if (path === 'c') return chainView(decodeURIComponent(id));
   if (location.hash.startsWith('#/audit')) return auditView(query.get('show'));
+  if (location.hash.startsWith('#/readiness')) return readinessView(query.get('changed'));
   return listView(query.get('type'));
 }
 

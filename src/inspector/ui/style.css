@@ -185,3 +185,7 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
     animation-duration: 1ms !important;
   }
 }
+
+.ready-blocked { color: #e0703f; font-weight: 600; }
+.ready-warning { color: #d9a441; font-weight: 600; }
+.ready-clear { color: #4caf7a; }

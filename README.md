@@ -299,6 +299,22 @@ nothing in the record covered the change at all — a release where nothing matc
 a clean release, and reporting it as one would manufacture confidence the ledger never
 earned.
 
+### Coverage and reports
+
+A changed requirement that no test covers, in any of its versions, is **untested**. The gate
+lists it and the brief names it; `--require-coverage` (Action input `require-coverage`) makes
+it block, and only a test clears that.
+
+```bash
+qa-spine export --format csv  > matrix.csv     # one row per requirement, for a spreadsheet or an auditor
+qa-spine export --format html > matrix.html    # the same, to send: no script, no external request
+qa-spine export --format jsonl > ledger.jsonl  # every artifact and edge
+```
+
+`--changed PROJ-1,PROJ-2` limits the matrix to what a change touches. The Inspector's
+**readiness** view is the same list, worst first: blocked (an open question or a failing
+test), needs attention (edited since its audit, or untested), clear.
+
 ### Answering questions
 
 A blocked gate says exactly how to unblock it. Each open question in its output comes with the
@@ -406,8 +422,10 @@ empty rather than reporting a clean release.
 - **Faster answers.** Suggested answers, `qa-spine answer`, and a gate summary that prints the
   commands that unblock it. Done.
 - **Rubric measurement.** `qa-spine rubric-report`, and an `ambiguity/2` candidate rubric. Done.
+- **Coverage and reports.** Untested requirements, `--require-coverage`, `export`, and the
+  Inspector's readiness view. Done.
 - **Next — see [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).**
-  Coverage, team features.
+  Team features.
 - **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
 
 ## License

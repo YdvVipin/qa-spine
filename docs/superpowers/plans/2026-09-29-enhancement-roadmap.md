@@ -137,7 +137,7 @@ Size: **S** ≈ 1–2 days, **M** ≈ 3–5 days, **L** ≈ 1–2 weeks (one dev
 
 **I4. Release-readiness view + clarity score** (M, from Qase, requirements-analyzer)
 - Inspector view per `releaseRef`: every requirement touched, open / answered / suspect / untested, one line each, sorted worst first.
-- Clarity score per requirement = computed from open findings by rule weight; shown as a trend, not a gate.
+- Clarity score — *dropped 2026-09-29: it would be a number built from invented weights; the readiness view's counts say the same thing honestly.*
 
 **I5. Close the measurement loop** (M, from Langfuse score analytics)
 - `qa-spine rubric-report`: from review labels, 👍 rate and 👎 notes grouped by `promptVersion` × `model` × rule.
@@ -187,7 +187,7 @@ project; that check is the countermeasure).
 | **M3 ✅** | Requirements change | R1 versions + suspect links; importer update behaviour | M | Biggest correctness gap found in research; affects real use as soon as tickets are edited |
 | **M4 ✅** | Faster answers | I1 suggested answers, I2 `answer` CLI + actionable PR comment, I3 `status` | M | Adoption: once the gate blocks, the next thing users feel is how slow it is to unblock |
 | **M5 ✅** | Measurement | I5 `rubric-report`, then rubric `ambiguity/2` | M | Needs M4's answers and reviews to have data |
-| **M6** | Coverage + reporting | R5 coverage signal, I4 readiness view, I6 exports | M–L | Needs M1 test data |
+| **M6 ✅** | Coverage + reporting | R5 coverage signal, I4 readiness view, I6 exports | M–L | Needs M1 test data |
 | **M7** | Teams | X1 bundle/merge, X2 importers, X3 MCP resources/prompts, R6 policy | M | Only matters once more than one person uses a store |
 | **Later** | `generate_fixtures` | X4 | L | |
 

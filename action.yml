@@ -36,6 +36,12 @@ inputs:
       default: it is reported either way. Only a re-audit clears it, not an override.
     required: false
     default: 'false'
+  require-coverage:
+    description: >-
+      Fail while a requirement this change touches has no test covering it. Off by default:
+      it is reported either way. Only adding a test clears it, not an override.
+    required: false
+    default: 'false'
   ticket-pattern:
     description: 'Regular expression matching ticket keys. Defaults to the Jira shape.'
     required: false
@@ -141,6 +147,7 @@ runs:
         [ -n "${{ inputs.release-ref }}" ]     && args+=(--release-ref "${{ inputs.release-ref }}")
         [ "${{ inputs.record }}" = "true" ]    && args+=(--record)
         [ "${{ inputs.block-on-suspect }}" = "true" ] && args+=(--block-on-suspect)
+        [ "${{ inputs.require-coverage }}" = "true" ] && args+=(--require-coverage)
         [ -n "${{ inputs.reason }}" ]          && args+=(--reason "${{ inputs.reason }}")
         [ -n "${{ inputs.override-reason }}" ] && args+=(--override-reason "${{ inputs.override-reason }}")
         [ -n "${{ inputs.approved-by }}" ]     && args+=(--approved-by "${{ inputs.approved-by }}")

@@ -14,7 +14,7 @@ import { isFlaky } from './release.ts';
  */
 
 /** `&` first, or the other replacements re-escape their own output. */
-const esc = (value: unknown): string =>
+export const esc = (value: unknown): string =>
   String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -83,6 +83,7 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const override = c.override && typeof c.override === 'object' ? c.override : null;
   const dropped: string[] = Array.isArray(c.droppedFromAssessment) ? c.droppedFromAssessment : [];
   const suspect: string[] = Array.isArray(c.suspect) ? c.suspect : [];
+  const untested: string[] = Array.isArray(c.untested) ? c.untested : [];
   // Each answer that accepted a suggested default, beside the question it answered.
   const assumptions = (Array.isArray(c.assumptions) ? c.assumptions : []).flatMap((id: string) => {
     const answer = store.get(id);
@@ -255,6 +256,14 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   <p>These were edited after their wording was last reviewed for unclear points, so questions
   answered and tests written against the earlier wording may no longer fit.</p>
   <ul>${suspect.map((ref) => `<li>${esc(ref)}</li>`).join('')}</ul>`
+      : ''
+  }
+
+  ${
+    untested.length
+      ? `<h2>Changed areas with no tests</h2>
+  <p>Nothing records a test for these, so nothing checked that they still work.</p>
+  <ul>${untested.map((ref) => `<li>${esc(ref)}</li>`).join('')}</ul>`
       : ''
   }
 

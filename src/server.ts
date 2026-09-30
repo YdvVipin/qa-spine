@@ -349,6 +349,8 @@ usage: qa-spine [subcommand]
   gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
   ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
+  export --format csv|html|jsonl
+                          traceability matrix (csv, html) or every artifact and edge (jsonl)
   rubric-report [--json]  how often reviewers judged each rubric version's findings good
   verify                  check the ledger's hash chain — exit 0 intact, 1 tampered, 2 error
   help                    show this screen
@@ -371,6 +373,7 @@ const SUBCOMMANDS = new Set([
   'verify',
   'review-export',
   'rubric-report',
+  'export',
 ]);
 
 if (invokedAsScript()) {
@@ -412,6 +415,28 @@ if (invokedAsScript()) {
       console.error(`qa-spine inspector → http://127.0.0.1:${port}  (reading ${path})`);
       break;
     }
+    case 'export': {
+      try {
+        const { values } = parseArgs({
+          args: process.argv.slice(3),
+          options: { format: { type: 'string' }, changed: { type: 'string', multiple: true } },
+        });
+        const store = new TraceStore(path);
+        const changed = (values.changed ?? []).flatMap((c) => c.split(',')).map((c) => c.trim()).filter(Boolean);
+        const { requirementStatus } = await import('./release.ts');
+        const { renderCsv, renderMatrixHtml, dumpJsonl } = await import('./export.ts');
+        const rows = () => requirementStatus(store, changed.length ? changed : undefined);
+        if (values.format === 'csv') process.stdout.write(renderCsv(rows()));
+        else if (values.format === 'html') process.stdout.write(renderMatrixHtml(rows()));
+        else if (values.format === 'jsonl') process.stdout.write(dumpJsonl(store));
+        else throw new Error('usage: qa-spine export --format csv|html|jsonl [--changed <refs>]');
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+      }
+      break;
+    }
+
     case 'rubric-report': {
       const { rubricReport, renderRubricReport } = await import('./audit.ts');
       const report = rubricReport(new TraceStore(path));
@@ -540,6 +565,7 @@ if (invokedAsScript()) {
             summary: { type: 'string' },
             json: { type: 'boolean' },
             'block-on-suspect': { type: 'boolean' },
+            'require-coverage': { type: 'boolean' },
           },
           allowPositionals: false,
         });
@@ -564,6 +590,7 @@ if (invokedAsScript()) {
           approvedBy: values['approved-by'],
           briefPath: values.brief,
           blockOnSuspect: values['block-on-suspect'],
+          requireCoverage: values['require-coverage'],
           toolVersion: VERSION,
         });
         // --summary writes the Markdown while stdout stays JSON. Without it a caller that

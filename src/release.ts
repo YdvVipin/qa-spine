@@ -66,6 +66,91 @@ export function isFlaky(runs: Artifact[]): boolean {
   );
 }
 
+/** Not replaced by a newer version of itself. */
+const isCurrent = (store: TraceStore, req: Artifact) => !store.linkedFrom(req.id, 'supersedes', 'requirement').length;
+
+/** The requirement versions this one replaced. */
+const previousVersions = (store: TraceStore, req: Artifact) =>
+  store
+    .edgesFrom(req.id)
+    .filter((e) => e.relation === 'supersedes' && store.get(e.toArtifactId)?.type === 'requirement')
+    .map((e) => e.toArtifactId);
+
+/** Every version of a requirement: all requirements sharing its sourceRef, or just itself. */
+const allVersions = (store: TraceStore, req: Artifact) =>
+  req.sourceRef ? store.bySourceRef([req.sourceRef]).filter((a) => a.type === 'requirement') : [req];
+
+/** Edited since it was last audited: replaced an earlier version, and no finding or audit since. */
+const isSuspect = (store: TraceStore, req: Artifact) =>
+  previousVersions(store, req).length > 0 &&
+  !store.linkedFrom(req.id, 'derived_from', 'finding').length &&
+  !store.linkedFrom(req.id, 'derived_from', 'audit').length;
+
+/** Test cases covering any version of the requirement, each once. */
+function coveringTests(store: TraceStore, req: Artifact): Artifact[] {
+  const tests = new Map<string, Artifact>();
+  for (const v of allVersions(store, req)) {
+    for (const tc of store.linkedFrom(v.id, 'covers', 'test_case')) tests.set(tc.id, tc);
+  }
+  return [...tests.values()];
+}
+
+export type RequirementStatus = {
+  requirementId: string;
+  sourceRef: string | null;
+  text: string;
+  status: 'blocked' | 'warning' | 'clear';
+  open: number;
+  answered: number;
+  assumptions: number;
+  tests: number;
+  failing: number;
+  flaky: number;
+  suspect: boolean;
+  untested: boolean;
+};
+
+/**
+ * One row per current requirement — every one in the store, or those among `changed` — with
+ * what the gate would say about it. Worst first: blocked (an open question or a failing
+ * test), then warning (suspect or untested), then clear. The Inspector's readiness view and
+ * the exports are both this list; neither decides anything the gate does not.
+ */
+export function requirementStatus(store: TraceStore, changed?: string[]): RequirementStatus[] {
+  const candidates = changed
+    ? store.bySourceRef(changed).filter((a) => a.type === 'requirement')
+    : store.list('requirement', 1e9);
+  const rank = { blocked: 0, warning: 1, clear: 2 };
+  return candidates
+    .filter((req) => isCurrent(store, req))
+    .map((req) => {
+      const versions = allVersions(store, req);
+      const answers = versions.flatMap((v) => store.linkedFrom(v.id, 'derived_from', 'answer'));
+      const tests = coveringTests(store, req);
+      const runs = tests.map((tc) => store.linkedFrom(tc.id, 'verifies', 'test_run'));
+      const open = versions.reduce((n, v) => n + store.openFindings(500, v.id).length, 0);
+      const failing = runs.filter((r) => r[0] && BLOCKING_STATUS.has(String(r[0].content.status))).length;
+      const suspect = isSuspect(store, req);
+      const untested = tests.length === 0;
+      const status: RequirementStatus['status'] = open || failing ? 'blocked' : suspect || untested ? 'warning' : 'clear';
+      return {
+        requirementId: req.id,
+        sourceRef: req.sourceRef,
+        text: String(req.content.text ?? ''),
+        status,
+        open,
+        answered: answers.length,
+        assumptions: answers.filter((a) => a.content.assumption === true).length,
+        tests: tests.length,
+        failing,
+        flaky: runs.filter((r) => isFlaky(r)).length,
+        suspect,
+        untested,
+      };
+    })
+    .sort((a, b) => rank[a.status] - rank[b.status] || String(a.sourceRef).localeCompare(String(b.sourceRef)));
+}
+
 /**
  * Makes no model call. Like `auditRequirement`, this is a librarian: it computes the one
  * deterministic signal and hands over the surrounding evidence for the caller to reason over.
@@ -159,17 +244,16 @@ export function assessReleaseRisk(
   // Suspect: the current version of a requirement that replaced an earlier one and has not
   // been audited since — its tests and answers were written against wording that changed.
   // A warning, not a signal: the gate blocks on it only when asked to.
-  const suspect = requirements.flatMap((req) => {
-    if (store.linkedFrom(req.id, 'supersedes', 'requirement').length) return []; // not current
-    const previousIds = store
-      .edgesFrom(req.id)
-      .filter((e) => e.relation === 'supersedes' && store.get(e.toArtifactId)?.type === 'requirement')
-      .map((e) => e.toArtifactId);
-    if (!previousIds.length) return [];
-    const audited =
-      store.linkedFrom(req.id, 'derived_from', 'finding').length || store.linkedFrom(req.id, 'derived_from', 'audit').length;
-    return audited ? [] : [{ requirementId: req.id, sourceRef: req.sourceRef, previousIds }];
+  const current = requirements.filter((req) => isCurrent(store, req));
+  const suspect = current.flatMap((req) => {
+    const previousIds = previousVersions(store, req);
+    return isSuspect(store, req) ? [{ requirementId: req.id, sourceRef: req.sourceRef, previousIds }] : [];
   });
+
+  // Untested: no test covers the requirement in any of its versions. A warning, like suspect.
+  const untested = current.flatMap((req) =>
+    coveringTests(store, req).length ? [] : [{ requirementId: req.id, sourceRef: req.sourceRef }],
+  );
 
   // ponytail: merges whole chain() results, which on a densely linked store could be a large
   // subgraph. Bound the walk by depth if that becomes a problem.
@@ -190,6 +274,7 @@ export function assessReleaseRisk(
     signals,
     flaky,
     suspect,
+    untested,
     context: { nodes: [...nodes.values()], edges: [...edges.values()] },
     instructions: INSTRUCTIONS,
   };
@@ -300,7 +385,7 @@ export function recordVerdict(
     throw new Error('override is only meaningful with a ship verdict');
   }
 
-  const { release, signals, matched, suspect } = assessReleaseRisk(store, { changed: input.changed });
+  const { release, signals, matched, suspect, untested } = assessReleaseRisk(store, { changed: input.changed });
   const liveFindings = signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail.findingId] : []));
   const failing = signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
   const liveTestRuns = [...new Set(failing.map((t) => t.testRunId))];
@@ -383,6 +468,7 @@ export function recordVerdict(
       ...(assumptions.length ? { assumptions } : {}),
       // Requirements edited since they were last audited, as the refs a reader recognises.
       ...(suspect.length ? { suspect: [...new Set(suspect.map((s) => s.sourceRef ?? s.requirementId))] } : {}),
+      ...(untested.length ? { untested: [...new Set(untested.map((u) => u.sourceRef ?? u.requirementId))] } : {}),
     },
     provenance: input.provenance,
     links: cites.map((to) => ({ to, relation: 'derived_from' as const })),

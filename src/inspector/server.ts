@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { TraceStore } from '../trace/store.ts';
 import { ArtifactType } from '../trace/schema.ts';
 import { openQuestions, recordAnswer } from '../audit.ts';
+import { requirementStatus } from '../release.ts';
 
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), 'ui');
 const MIME: Record<string, string> = {
@@ -60,6 +61,11 @@ export function createInspector(store: TraceStore): Server {
           links: [{ to: artifactId, relation: 'reviews' }],
         });
         return send(200, review);
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/readiness') {
+        const changed = url.searchParams.get('changed')?.split(',').map((r) => r.trim()).filter(Boolean);
+        return send(200, { rows: requirementStatus(store, changed?.length ? changed : undefined) });
       }
 
       if (req.method === 'GET' && url.pathname === '/api/open') {
