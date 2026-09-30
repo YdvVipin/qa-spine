@@ -1,7 +1,6 @@
 # qa-spine — project status
 
-Snapshot as of **2026-09-29**, branch `junit-results` (`main` fast-forwarded to
-`delivery-integration` the same day). This is a status document, not
+Snapshot as of **2026-09-29**, branch `fixtures` (stacked: `requirement-versions` → `faster-answers` → `rubric-measurement` → `coverage-reports` → `team-features` → `fixtures`, all unmerged; `main` @ `14149d0`). This is a status document, not
 product documentation — see [README.md](README.md) for the user-facing description of
 what qa-spine does and how to run it. This file exists to answer "what's actually built,
 what's tested, and what's still open" in one place.
@@ -20,7 +19,7 @@ evidence) and validates what comes back. It also never mutates JIRA, repos, or C
 own — every write is an explicit call the agent makes, and a `ship` verdict is blocked
 unless the caller supplies an override reason while a signal is live.
 
-## Status: Phases 1–5 complete, plus JUnit results, ledger integrity and requirement versions (Sep 2026)
+## Status: every roadmap item built (Sep 2026)
 
 | Phase | What | Status |
 |---|---|---|
@@ -35,7 +34,11 @@ unless the caller supplies an override reason while a signal is live.
 | — | JUnit results — `ingest-junit`; a failing test on a changed area blocks; flaky tests labelled | Done, merged to `main` |
 | — | Ledger integrity — hash chain + `verify`; raw writes can't record gated types; narrowed release lists recorded | Done, merged to `main` |
 | — | Requirement versions — edits supersede instead of duplicating; suspect until re-audited; clean audits recorded | Done, on `requirement-versions` |
-| Later | `generate_fixtures` — schema-validated test data with locale packs | Not started |
+| — | Faster answers — suggested answers, `qa-spine answer`, unblocking commands in the gate | Done, on `faster-answers` |
+| — | Rubric measurement — `rubric-report`; `ambiguity/2` as a candidate rubric | Done, on `rubric-measurement` |
+| — | Coverage and reports — untested requirements, `export`, Inspector readiness view | Done, on `coverage-reports` |
+| — | Team features — `merge`, GitHub/Linear importers, MCP resource + prompt, human-approval policy | Done, on `team-features` |
+| — | Test data — `fixtures_request` / `fixtures_submit` with locale packs | Done, on `fixtures` |
 
 What comes next, and why, is in
 [docs/superpowers/plans/2026-09-29-enhancement-roadmap.md](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).
@@ -44,26 +47,29 @@ What comes next, and why, is in
 
 ```
 src/
-  server.ts          733 lines  MCP server + CLI entrypoint (all tool/subcommand wiring)
-  release.ts         364 lines  assess_release_risk / release_submit (release verdicts)
-  gate.ts            294 lines  `qa-spine gate` — the CI release check
-  audit.ts           246 lines  audit_requirement / audit_submit (ambiguity audit)
-  brief.ts           263 lines  verdict -> self-contained HTML brief
-  junit.ts           263 lines  JUnit XML parser + `ingest-junit` (test results, flaky detection)
+  server.ts          970 lines  MCP server + CLI entrypoint (all tool/subcommand wiring)
+  release.ts         509 lines  release risk, verdicts, requirement status
+  gate.ts            373 lines  `qa-spine gate` — the CI release check
+  audit.ts           360 lines  ambiguity audit, answers, rubric report
+  brief.ts           305 lines  verdict -> self-contained HTML brief
+  junit.ts           263 lines  JUnit XML parser + `ingest-junit`
+  fixtures.ts        187 lines  schema-validated test data, locale packs
+  export.ts           82 lines  traceability matrix (csv, html), jsonl dump
   demo.ts            120 lines  seeds the worked example into a throwaway store
   trace/
-    store.ts         492 lines  SQLite-backed append-only store, trigger-enforced + hash chain
-    schema.ts         94 lines  Zod schemas for artifacts/edges/provenance
+    store.ts         621 lines  append-only store: triggers, hash chain, verify, merge, versioning
+    schema.ts         98 lines  Zod schemas for artifacts/edges/provenance
   inspector/
-    server.ts        135 lines  loopback-only HTTP server for the Inspector UI
+    server.ts        141 lines  loopback-only HTTP server for the Inspector UI
     ui/                         index.html, style.css, app.js (vanilla, no build step)
 
-tests/               4,567 lines across 20 files — 273 tests, all passing
-rubrics/ambiguity.json          the published ambiguity rubric (4 rules, version ambiguity/1)
-action.yml                      composite GitHub Action wrapping `qa-spine gate`
-examples/            import-jira.ts, github-workflow.yml — no Jira coupling in the server
-docs/superpowers/    per-feature specs + implementation plans (dated, one pair per feature)
-.superpowers/sdd/    execution ledgers for each plan — task-by-task briefs, reports, review findings
+tests/             5,431 lines across 27 files — 333 tests, all passing
+rubrics/ambiguity.json          the published ambiguity rubric (4 rules, ambiguity/1)
+rubrics/candidates/             ambiguity-2.json: v1 plus 5 rules, not yet the default
+locales/                        en-US, en-GB, de-DE, en-IN packs for fixtures
+action.yml                      composite GitHub Action: verify, ingest-junit, gate
+examples/            import-jira.ts, import-github.ts, import-linear.ts, github-workflow.yml
+docs/superpowers/    per-feature specs + implementation plans, and the enhancement roadmap
 ```
 
 Zero runtime dependencies beyond `@modelcontextprotocol/sdk` and `zod` — the store uses
@@ -172,7 +178,7 @@ mtime unchanged) throughout — all verification ran against a scratch DB via `Q
 
 ## Testing
 
-- qa-spine: `npm test` → 273/273 passing, `tsc` clean via `npm run build`.
+- qa-spine: `npm test` → 333/333 passing, `tsc` clean via `npm run build`.
 - QAAE side of the integration: 105 passed, 1 skipped across the auditor, spine-client,
   spine-instrumentation, orchestration-loop and plan-generator suites.
 - Every fix in the final review round was verified with an explicit **round-trip**: revert
