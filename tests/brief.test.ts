@@ -625,3 +625,15 @@ test('a verdict that dropped assessed areas says so in plain words', () => {
   assert.match(html, /covered fewer areas than were assessed earlier/);
   assert.match(html, /src\/pay\.ts/);
 });
+
+test('a verdict with suspect requirements lists them in plain words', async () => {
+  const { recordRequirement } = await import('../src/trace/store.ts');
+  const store = new TraceStore(':memory:');
+  const v1 = recordRequirement(store, { type: 'requirement', sourceRef: 'PROJ-50', content: { text: 'A.' }, provenance: human });
+  const v2 = recordRequirement(store, { type: 'requirement', sourceRef: 'PROJ-50', content: { text: 'B.' }, provenance: human });
+  const v = recordVerdict(store, { releaseRef: 'r', verdict: 'hold', reason: 'Checking.', cites: [], changed: ['PROJ-50'], provenance: human });
+  const html = body(renderBrief(store, v.id));
+  assert.match(html, /Requirements that changed after they were last checked/);
+  assert.match(html, /PROJ-50/);
+  assert.ok(!html.includes(v1.id) && !html.includes(v2.id));
+});

@@ -528,6 +528,7 @@ if (invokedAsScript()) {
             brief: { type: 'string' },
             summary: { type: 'string' },
             json: { type: 'boolean' },
+            'block-on-suspect': { type: 'boolean' },
           },
           allowPositionals: false,
         });
@@ -551,6 +552,7 @@ if (invokedAsScript()) {
           overrideReason: values['override-reason'],
           approvedBy: values['approved-by'],
           briefPath: values.brief,
+          blockOnSuspect: values['block-on-suspect'],
           toolVersion: VERSION,
         });
         // --summary writes the Markdown while stdout stays JSON. Without it a caller that

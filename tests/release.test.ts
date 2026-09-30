@@ -778,3 +778,50 @@ test('the ship refusal counts a test covering two changed requirements once', ()
     /cannot ship: 1 failing test\(s\)/,
   );
 });
+
+/** PROJ-50 recorded, then edited `edits` times through recordRequirement. Returns every version. */
+async function seedVersions(store: TraceStore, edits: number) {
+  const { recordRequirement } = await import('../src/trace/store.ts');
+  return Array.from({ length: edits + 1 }, (_, i) =>
+    recordRequirement(store, { type: 'requirement', sourceRef: 'PROJ-50', content: { text: `Version ${i}.` }, provenance: human }),
+  );
+}
+
+test('an edited requirement nobody has audited since is suspect', async () => {
+  const store = new TraceStore(':memory:');
+  const [v1, v2] = await seedVersions(store, 1);
+  assert.deepEqual(assessReleaseRisk(store, { changed: ['PROJ-50'] }).suspect, [
+    { requirementId: v2.id, sourceRef: 'PROJ-50', previousIds: [v1.id] },
+  ]);
+});
+
+test('only the current version is suspect, not every edit in its history', async () => {
+  const store = new TraceStore(':memory:');
+  const [, v2, v3] = await seedVersions(store, 2);
+  assert.deepEqual(assessReleaseRisk(store, { changed: ['PROJ-50'] }).suspect.map((s) => [s.requirementId, s.previousIds]), [[v3.id, [v2.id]]]);
+});
+
+test('an unedited requirement is never suspect', async () => {
+  const store = new TraceStore(':memory:');
+  await seedVersions(store, 0);
+  assert.deepEqual(assessReleaseRisk(store, { changed: ['PROJ-50'] }).suspect, []);
+});
+
+for (const type of ['finding', 'audit'] as const) {
+  test(`a ${type} on the new version clears suspect`, async () => {
+    const store = new TraceStore(':memory:');
+    const [, v2] = await seedVersions(store, 1);
+    store.record({ type, content: {}, provenance: human, links: [{ to: v2.id, relation: 'derived_from' }] });
+    assert.deepEqual(assessReleaseRisk(store, { changed: ['PROJ-50'] }).suspect, []);
+  });
+}
+
+test('a verdict records suspect requirements, and records nothing when there are none', async () => {
+  const store = new TraceStore(':memory:');
+  await seedVersions(store, 1);
+  store.record({ type: 'requirement', sourceRef: 'PROJ-51', content: { text: 'Clean.' }, provenance: human });
+  const withSuspect = recordVerdict(store, { releaseRef: 'r', verdict: 'hold', reason: 'Checking.', cites: [], changed: ['PROJ-50'], provenance: human });
+  assert.deepEqual(withSuspect.content.suspect, ['PROJ-50']);
+  const clean = recordVerdict(store, { releaseRef: 'r', verdict: 'ship', reason: 'Fine.', cites: [], changed: ['PROJ-51'], provenance: human });
+  assert.equal('suspect' in clean.content, false);
+});

@@ -20,6 +20,8 @@ export type GateOptions = {
   overrideReason?: string;
   approvedBy?: string;
   briefPath?: string;
+  /** Block while a changed requirement was edited after its last audit. Off by default. */
+  blockOnSuspect?: boolean;
   cwd?: string;
   /** Passed in rather than imported: VERSION lives in server.ts, which imports this module. */
   toolVersion?: string;
@@ -45,6 +47,8 @@ export type GateResult = {
   failingTests: FailingTest[];
   /** Tests on changed areas that failed and passed on the same commit. Information only. */
   flakyTests: { testCaseId: string; requirementId: string; name: string }[];
+  /** Changed requirements edited since their last audit. A warning unless --block-on-suspect. */
+  suspect: { requirementId: string; sourceRef: string | null; previousIds: string[] }[];
   recorded: { verdictId: string; verdict: 'ship' | 'hold'; briefPath: string | null } | null;
 };
 
@@ -99,7 +103,10 @@ export function refsFromGit(since: string, cwd: string, ticketPattern: string): 
  * clean release, and reporting it in the first case's words would manufacture confidence the
  * record never earned.
  */
-export function defaultReason(signalCount: number, matchedCount: number, failingCount = 0): string {
+export function defaultReason(signalCount: number, matchedCount: number, failingCount = 0, suspectBlocking = false): string {
+  if (!signalCount && !failingCount && suspectBlocking) {
+    return 'Requirements this release changed were edited after they were last checked, and have not been checked again.';
+  }
   if (signalCount && failingCount) {
     return (
       'One or more questions raised when this work was specified have not been answered, ' +
@@ -152,7 +159,10 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     .filter((t) => !seenRuns.has(t.testRunId) && !!seenRuns.add(t.testRunId));
   const blocked = signals.length + failingTests.length > 0;
   const overriding = !!opts.overrideReason && blocked;
-  const shippable = !blocked || overriding;
+  // An override is a person accepting a known risk. A requirement nobody has audited since
+  // it changed is not a known risk yet, so only a re-audit clears this block.
+  const suspectBlocking = !!opts.blockOnSuspect && assessment.suspect.length > 0;
+  const shippable = (!blocked || overriding) && !suspectBlocking;
 
   const result: GateResult = {
     shippable,
@@ -166,6 +176,7 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     signals,
     failingTests,
     flakyTests: assessment.flaky,
+    suspect: assessment.suspect,
     recorded: null,
   };
 
@@ -190,12 +201,12 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     verdict,
     reason:
       opts.reason?.trim() ||
-      defaultReason(signals.length, assessment.matched.requirements.length, failingTests.length),
+      defaultReason(signals.length, assessment.matched.requirements.length, failingTests.length, suspectBlocking),
     cites,
     changed,
     // Only when it overrides something. recordVerdict rejects an override alongside a hold,
     // and discards one that overrode nothing.
-    override: overriding ? { reason: opts.overrideReason! } : undefined,
+    override: overriding && verdict === 'ship' ? { reason: opts.overrideReason! } : undefined,
     provenance: {
       producer: 'tool',
       tool: TOOL,
@@ -263,6 +274,16 @@ export function renderSummary(r: GateResult): string {
       lines.push(bullet(`${t.sourceRef ?? 'no reference'} — ${t.name} (${t.status}${flaky})`));
       if (t.message) lines.push(`  > ${t.message.split('\n')[0]}`);
     }
+    lines.push('');
+  }
+
+  if (r.suspect.length) {
+    const n = r.suspect.length;
+    lines.push(
+      `**${n} requirement${n === 1 ? '' : 's'} changed since ${n === 1 ? 'it was' : 'they were'} last audited**` +
+        (r.shippable ? '' : ' — re-audit to clear; an override does not') + ':',
+    );
+    for (const s of r.suspect) lines.push(bullet(s.sourceRef ?? s.requirementId));
     lines.push('');
   }
 

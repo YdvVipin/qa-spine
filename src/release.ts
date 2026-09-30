@@ -154,6 +154,21 @@ export function assessReleaseRisk(
   );
   const signals = [...findingSignals, ...testSignals];
 
+  // Suspect: the current version of a requirement that replaced an earlier one and has not
+  // been audited since — its tests and answers were written against wording that changed.
+  // A warning, not a signal: the gate blocks on it only when asked to.
+  const suspect = requirements.flatMap((req) => {
+    if (store.linkedFrom(req.id, 'supersedes', 'requirement').length) return []; // not current
+    const previousIds = store
+      .edgesFrom(req.id)
+      .filter((e) => e.relation === 'supersedes' && store.get(e.toArtifactId)?.type === 'requirement')
+      .map((e) => e.toArtifactId);
+    if (!previousIds.length) return [];
+    const audited =
+      store.linkedFrom(req.id, 'derived_from', 'finding').length || store.linkedFrom(req.id, 'derived_from', 'audit').length;
+    return audited ? [] : [{ requirementId: req.id, sourceRef: req.sourceRef, previousIds }];
+  });
+
   // ponytail: merges whole chain() results, which on a densely linked store could be a large
   // subgraph. Bound the walk by depth if that becomes a problem.
   const nodes = new Map<string, Artifact>();
@@ -172,6 +187,7 @@ export function assessReleaseRisk(
     matched: { requirements: requirements.map((r) => r.id), unmatched },
     signals,
     flaky,
+    suspect,
     context: { nodes: [...nodes.values()], edges: [...edges.values()] },
     instructions: INSTRUCTIONS,
   };
@@ -282,7 +298,7 @@ export function recordVerdict(
     throw new Error('override is only meaningful with a ship verdict');
   }
 
-  const { release, signals, matched } = assessReleaseRisk(store, { changed: input.changed });
+  const { release, signals, matched, suspect } = assessReleaseRisk(store, { changed: input.changed });
   const liveFindings = signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail.findingId] : []));
   const failing = signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
   const liveTestRuns = [...new Set(failing.map((t) => t.testRunId))];
@@ -357,6 +373,8 @@ export function recordVerdict(
       // Not refused — splitting a release into two decisions is legitimate — but recorded,
       // so a quietly narrowed list is visible instead of looking like a clean release.
       ...(dropped.length ? { droppedFromAssessment: dropped } : {}),
+      // Requirements edited since they were last audited, as the refs a reader recognises.
+      ...(suspect.length ? { suspect: [...new Set(suspect.map((s) => s.sourceRef ?? s.requirementId))] } : {}),
     },
     provenance: input.provenance,
     links: cites.map((to) => ({ to, relation: 'derived_from' as const })),

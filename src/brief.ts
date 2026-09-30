@@ -82,6 +82,7 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const unmatched = new Set<string>(Array.isArray(c.unmatched) ? c.unmatched : []);
   const override = c.override && typeof c.override === 'object' ? c.override : null;
   const dropped: string[] = Array.isArray(c.droppedFromAssessment) ? c.droppedFromAssessment : [];
+  const suspect: string[] = Array.isArray(c.suspect) ? c.suspect : [];
 
   // C1: section 3 is built from `content.liveFindings` alone — the findings that were
   // actually open (unresolved) when the verdict was recorded — never from `cites` (the
@@ -222,6 +223,15 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
     <p>Assessed, but left out of this decision:</p>
     <ul>${dropped.map((ref) => `<li>${esc(ref)}</li>`).join('')}</ul>
   </div>`
+      : ''
+  }
+
+  ${
+    suspect.length
+      ? `<h2>Requirements that changed after they were last checked</h2>
+  <p>These were edited after their wording was last reviewed for unclear points, so questions
+  answered and tests written against the earlier wording may no longer fit.</p>
+  <ul>${suspect.map((ref) => `<li>${esc(ref)}</li>`).join('')}</ul>`
       : ''
   }
 

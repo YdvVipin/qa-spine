@@ -410,3 +410,62 @@ test('one failing test covering two changed requirements is one failing test', (
     assert.equal(JSON.parse(gate(['--changed', 'PROJ-7,PROJ-8', '--json'], db).out).failingTests.length, 1);
   });
 });
+
+/** PROJ-7 edited once through recordRequirement and never re-audited. */
+async function editProj7(store: TraceStore) {
+  const { recordRequirement } = await import('../src/trace/store.ts');
+  recordRequirement(store, { type: 'requirement', sourceRef: 'PROJ-7', content: { text: 'The refund button hides while a refund runs.' }, provenance: human });
+}
+
+test('a requirement edited since its last audit is a warning, not a block', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qa-spine-gate-'));
+  try {
+    const db = join(dir, 'trace.db');
+    const { store } = seed(db);
+    await editProj7(store);
+    const { code, out } = gate(['--changed', 'PROJ-7'], db);
+    assert.equal(code, 0);
+    assert.match(out, /1 requirement changed since it was last audited/);
+    assert.match(out, /PROJ-7/);
+    assert.deepEqual(JSON.parse(gate(['--changed', 'PROJ-7', '--json'], db).out).suspect.map((s: any) => s.sourceRef), ['PROJ-7']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--block-on-suspect blocks, and an override does not clear it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qa-spine-gate-'));
+  try {
+    const db = join(dir, 'trace.db');
+    const { store } = seed(db);
+    await editProj7(store);
+    assert.equal(gate(['--changed', 'PROJ-7', '--block-on-suspect'], db).code, 1);
+    const overridden = gate(
+      ['--changed', 'PROJ-7', '--block-on-suspect', '--record', '--release-ref', 'v6', '--override-reason', 'Hotfix.', '--approved-by', 'a.rivera', '--json'],
+      db,
+    );
+    assert.equal(overridden.code, 1, 'only a re-audit clears a suspect requirement');
+    const verdict = new TraceStore(db).get(JSON.parse(overridden.out).recorded.verdictId)!;
+    assert.equal(verdict.content.verdict, 'hold');
+    assert.match(String(verdict.content.reason), /edited after they were last checked/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--block-on-suspect with a question and an override holds rather than erroring', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qa-spine-gate-'));
+  try {
+    const db = join(dir, 'trace.db');
+    const { store } = seed(db);
+    await editProj7(store);
+    const r = gate(
+      ['--changed', 'PROJ-7,PROJ-42', '--block-on-suspect', '--record', '--release-ref', 'v7', '--override-reason', 'Hotfix.', '--approved-by', 'a.rivera', '--json'],
+      db,
+    );
+    assert.equal(r.code, 1, r.err);
+    assert.equal(JSON.parse(r.out).recorded.verdict, 'hold');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
