@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { Artifact, Edge, Provenance, type Chain, type Relation } from './schema.ts';
 
 /**
@@ -32,7 +34,49 @@ CREATE TRIGGER IF NOT EXISTS edges_no_update BEFORE UPDATE ON edges
   BEGIN SELECT RAISE(ABORT, 'trace store is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS edges_no_delete BEFORE DELETE ON edges
   BEGIN SELECT RAISE(ABORT, 'trace store is append-only'); END;
+CREATE TABLE IF NOT EXISTS chain (
+  seq  INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL,
+  ref  TEXT NOT NULL,
+  hash TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS chain_no_update BEFORE UPDATE ON chain
+  BEGIN SELECT RAISE(ABORT, 'trace store is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS chain_no_delete BEFORE DELETE ON chain
+  BEGIN SELECT RAISE(ABORT, 'trace store is append-only'); END;
 `;
+
+/**
+ * The hash chain. Every artifact and edge written through this class appends a chain row:
+ * `hash = sha256(previous hash + the row exactly as stored)`. The triggers above stop edits;
+ * the chain is what shows an edit happened after someone removed them, or a row was added
+ * straight into SQLite.
+ *
+ * The first chain row is a genesis row recording the highest rowid each table had before
+ * chaining began: rows at or below it were written by a qa-spine that did not chain, and are
+ * reported as legacy rather than as tampering.
+ *
+ * ponytail: nothing anchors the head outside the file, so someone who understands the scheme
+ * can rewrite a row and recompute every hash after it. `verify` prints the head so a team can
+ * anchor it somewhere they already trust; a store committed to git is anchored by git.
+ * Upgrade: sign the head, or record it in the verdict and publish it with the brief.
+ */
+const GENESIS_PREV = '0'.repeat(64);
+const chainHash = (prev: string, payload: string) => createHash('sha256').update(prev).update(payload).digest('hex');
+const artifactPayload = (r: Row) =>
+  JSON.stringify(['artifact', r.id, r.type, r.source_ref, r.content, r.provenance, r.created_at]);
+const edgePayload = (e: { from_id: string; to_id: string; relation: string; created_at: string }) =>
+  JSON.stringify(['edge', e.from_id, e.to_id, e.relation, e.created_at]);
+const edgeRef = (from: string, to: string, relation: string) => `${from}>${to}:${relation}`;
+
+export type VerifyProblem = { kind: string; ref: string; problem: string };
+export type VerifyResult = {
+  ok: boolean;
+  chained: number;
+  legacy: number;
+  head: string | null;
+  problems: VerifyProblem[];
+};
 
 /** Types whose only legitimate writer is a gated recorder, and the recorder to use instead. */
 const GATED: Partial<Record<Artifact['type'], string>> = {
@@ -88,6 +132,7 @@ export class TraceStore {
   private db: DatabaseSync;
 
   constructor(path: string) {
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA foreign_keys = ON');
     // Concurrent writers (multiple CLI `record` invocations) otherwise hit
@@ -124,16 +169,18 @@ export class TraceStore {
     // and inside transaction(). Outside one, a savepoint opens and commits its own.
     this.db.exec('SAVEPOINT record');
     try {
-      this.db
+      const row: Row = {
+        id: artifact.id,
+        type: artifact.type,
+        source_ref: artifact.sourceRef,
+        content: JSON.stringify(artifact.content),
+        provenance: JSON.stringify(artifact.provenance),
+        created_at: artifact.createdAt,
+      };
+      const { lastInsertRowid } = this.db
         .prepare('INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?)')
-        .run(
-          artifact.id,
-          artifact.type,
-          artifact.sourceRef,
-          JSON.stringify(artifact.content),
-          JSON.stringify(artifact.provenance),
-          artifact.createdAt,
-        );
+        .run(row.id, row.type, row.source_ref, row.content, row.provenance, row.created_at);
+      this.appendChain('artifact', row.id, artifactPayload(row), lastInsertRowid);
       for (const link of input.links ?? []) this.link(artifact.id, link.to, link.relation);
       this.db.exec('RELEASE record');
     } catch (err) {
@@ -163,11 +210,21 @@ export class TraceStore {
       relation,
       createdAt: new Date().toISOString(),
     });
+    // The edge and its chain row land together or not at all.
+    this.db.exec('SAVEPOINT link');
     try {
-      this.db
+      const { lastInsertRowid } = this.db
         .prepare('INSERT INTO edges VALUES (?, ?, ?, ?)')
         .run(from, to, relation, edge.createdAt);
+      this.appendChain(
+        'edge',
+        edgeRef(from, to, relation),
+        edgePayload({ from_id: from, to_id: to, relation, created_at: edge.createdAt }),
+        lastInsertRowid,
+      );
+      this.db.exec('RELEASE link');
     } catch (err) {
+      this.db.exec('ROLLBACK TO link; RELEASE link');
       // The FK constraint is the only realistic failure and its native message is opaque.
       if (!this.get(from) || !this.get(to)) {
         throw new Error(`cannot link ${from} -> ${to}: artifact does not exist`);
@@ -175,6 +232,97 @@ export class TraceStore {
       throw err;
     }
     return edge;
+  }
+
+  /**
+   * Appends the chain row for a row just inserted. Called after the insert, never before:
+   * the insert takes SQLite's write lock, so two writers cannot both read the same head.
+   */
+  private appendChain(kind: 'artifact' | 'edge', ref: string, payload: string, ownRowid: number | bigint) {
+    const insert = this.db.prepare('INSERT INTO chain (kind, ref, hash) VALUES (?, ?, ?)');
+    let prev = (this.db.prepare('SELECT hash FROM chain ORDER BY seq DESC LIMIT 1').get() as { hash: string } | undefined)
+      ?.hash;
+    if (!prev) {
+      // Highest rowid each table had before this row: everything at or below is legacy.
+      const mark = (table: 'artifacts' | 'edges', own: number | bigint) =>
+        (this.db.prepare(`SELECT coalesce(max(rowid), 0) AS m FROM ${table} WHERE rowid <> ?`).get(own) as { m: number }).m;
+      const watermarks = `${mark('artifacts', kind === 'artifact' ? ownRowid : -1)}:${mark('edges', kind === 'edge' ? ownRowid : -1)}`;
+      prev = chainHash(GENESIS_PREV, JSON.stringify(['genesis', watermarks]));
+      insert.run('genesis', watermarks, prev);
+    }
+    insert.run(kind, ref, chainHash(prev, payload));
+  }
+
+  /** Recomputes the chain and checks every row against it. Reads only. */
+  verify(): VerifyResult {
+    const chain = this.db.prepare('SELECT kind, ref, hash FROM chain ORDER BY seq').all() as {
+      kind: string;
+      ref: string;
+      hash: string;
+    }[];
+    const countAbove = (table: 'artifacts' | 'edges', mark: number, above: boolean) =>
+      (this.db.prepare(`SELECT count(*) AS n FROM ${table} WHERE rowid ${above ? '>' : '<='} ?`).get(mark) as { n: number }).n;
+
+    if (!chain.length) {
+      const all = countAbove('artifacts', -1, true) + countAbove('edges', -1, true);
+      return { ok: true, chained: 0, legacy: all, head: null, problems: [] };
+    }
+
+    const problems: VerifyProblem[] = [];
+    const chainedArtifacts = new Set<string>();
+    const chainedEdges = new Set<string>();
+    let [artifactMark, edgeMark] = [0, 0];
+    let prev = GENESIS_PREV;
+
+    for (const link of chain) {
+      let payload: string | undefined;
+      if (link.kind === 'genesis') {
+        [artifactMark, edgeMark] = link.ref.split(':').map(Number);
+        payload = JSON.stringify(['genesis', link.ref]);
+      } else if (link.kind === 'artifact') {
+        chainedArtifacts.add(link.ref);
+        const row = this.db.prepare('SELECT * FROM artifacts WHERE id = ?').get(link.ref) as Row | undefined;
+        payload = row && artifactPayload(row);
+      } else {
+        chainedEdges.add(link.ref);
+        const [from, rest] = [link.ref.slice(0, link.ref.indexOf('>')), link.ref.slice(link.ref.indexOf('>') + 1)];
+        const [to, relation] = [rest.slice(0, rest.lastIndexOf(':')), rest.slice(rest.lastIndexOf(':') + 1)];
+        const row = this.db
+          .prepare('SELECT * FROM edges WHERE from_id = ? AND to_id = ? AND relation = ?')
+          .get(from, to, relation) as { from_id: string; to_id: string; relation: string; created_at: string } | undefined;
+        payload = row && edgePayload(row);
+      }
+      if (payload === undefined) problems.push({ kind: link.kind, ref: link.ref, problem: 'deleted' });
+      else if (chainHash(prev, payload) !== link.hash) {
+        problems.push({ kind: link.kind, ref: link.ref, problem: 'changed after it was recorded' });
+      }
+      // Each row is judged against the hash stored before it, so one edit is one problem,
+      // not a cascade down the rest of the chain.
+      prev = link.hash;
+    }
+
+    const unchained = [
+      ...(this.db.prepare('SELECT id FROM artifacts WHERE rowid > ?').all(artifactMark) as { id: string }[])
+        .filter((r) => !chainedArtifacts.has(r.id))
+        .map((r) => ({ kind: 'artifact', ref: r.id })),
+      ...(this.db.prepare('SELECT from_id, to_id, relation FROM edges WHERE rowid > ?').all(edgeMark) as {
+        from_id: string;
+        to_id: string;
+        relation: string;
+      }[])
+        .map((e) => edgeRef(e.from_id, e.to_id, e.relation))
+        .filter((ref) => !chainedEdges.has(ref))
+        .map((ref) => ({ kind: 'edge', ref })),
+    ];
+    for (const u of unchained) problems.push({ ...u, problem: 'not written by qa-spine' });
+
+    return {
+      ok: problems.length === 0,
+      chained: chain.length - 1,
+      legacy: countAbove('artifacts', artifactMark, false) + countAbove('edges', edgeMark, false),
+      head: prev,
+      problems,
+    };
   }
 
   get(id: string): Artifact | undefined {
