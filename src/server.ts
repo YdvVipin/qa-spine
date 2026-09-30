@@ -21,7 +21,9 @@ import {
 import { assessReleaseRisk, recordVerdict } from './release.ts';
 import { renderBrief } from './brief.ts';
 
-export const VERSION = '0.1.0';
+// Read from package.json, one level up from both src/ and dist/, so the version the CLI and
+// the MCP handshake report is always the one npm published.
+export const VERSION: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 export function dbPath() {
   return resolve(process.env.QA_SPINE_DB ?? '.qa-spine/trace.db');

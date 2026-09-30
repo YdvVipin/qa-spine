@@ -78,3 +78,8 @@ test('a typo does not silently start a stdio MCP server', () => {
   assert.equal(out, '', 'diagnostics belong on stderr');
   assert.equal(madeStoreDir, false, 'a typo must not create .qa-spine/');
 });
+
+test('the CLI reports the version package.json publishes, so the two cannot drift', async () => {
+  const { readFileSync } = await import('node:fs');
+  assert.equal(VERSION, JSON.parse(readFileSync('package.json', 'utf8')).version);
+});
