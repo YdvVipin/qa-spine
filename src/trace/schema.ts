@@ -12,6 +12,8 @@ export const ArtifactType = z.enum([
   'review',
   /** A human's reply to a finding's question. Supersedes the finding it answers. */
   'answer',
+  /** An audit that found nothing. Findings already show an audit happened; this shows a clean one did. */
+  'audit',
 ]);
 
 /**

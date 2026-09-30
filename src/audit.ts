@@ -59,7 +59,8 @@ const INSTRUCTIONS =
   'whole submission. `question` is for a human to answer: never return a rewritten ' +
   'requirement, and write it in plain language a project manager would understand — no ' +
   'internal identifiers, relation names, or system terminology, or the submission is ' +
-  'rejected. `confidence` is one of high, medium, low, unknown. Submit with audit_submit.';
+  'rejected. `confidence` is one of high, medium, low, unknown. Submit with audit_submit — ' +
+  'with an empty findings list when no rule fires, which records that the audit was clean.';
 
 /** Loads a requirement and proves it is auditable. Shared by both audit tools. */
 function requirementFor(store: TraceStore, id: string) {
@@ -118,7 +119,6 @@ export function submitFindings(
   input: { requirementId: string; findings: AuditFinding[]; provenance: Provenance },
 ): Artifact[] {
   const requirement = requirementFor(store, input.requirementId);
-  if (!input.findings.length) throw new Error('findings must not be empty');
 
   const findings = z.array(AuditFinding).parse(input.findings);
 
@@ -150,17 +150,33 @@ export function submitFindings(
     assertPlainLanguage('question', f.question);
   }
 
-  return findings.map((f) =>
+  // promptVersion is the one provenance field the server can honestly author, and it is what
+  // makes a rubric edit measurable against the exported review labels.
+  const provenance = { ...input.provenance, promptVersion: rubric.version };
+
+  // Nothing found is a result too: it is what shows an edited requirement was re-checked,
+  // and it is the true negative a rubric measurement needs.
+  if (!findings.length) {
+    return [
+      store.record({
+        type: 'audit',
+        sourceRef: requirement.sourceRef,
+        content: { rubricVersion: rubric.version, findings: 0 },
+        provenance,
+        links: [{ to: requirement.id, relation: 'derived_from' }],
+      }),
+    ];
+  }
+
+  return store.transaction(() => findings.map((f) =>
     store.record({
       type: 'finding',
       sourceRef: requirement.sourceRef,
       content: { ...f },
-      // promptVersion is the one provenance field the server can honestly author, and
-      // it is what makes a rubric edit measurable against the exported review labels.
-      provenance: { ...input.provenance, promptVersion: rubric.version },
+      provenance,
       links: [{ to: requirement.id, relation: 'derived_from' }],
     }),
-  );
+  ));
 }
 
 /** The requirement a finding came from, if that edge is intact. */

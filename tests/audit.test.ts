@@ -182,13 +182,6 @@ test('audit_submit is all-or-nothing when one finding of several is invalid', ()
   assert.equal(countArtifacts(store), before, 'the valid finding was not written either');
 });
 
-test('audit_submit rejects an empty findings list', () => {
-  const store = new TraceStore(':memory:');
-  const req = seedRequirement(store);
-
-  assert.throws(() => submitFindings(store, { requirementId: req.id, findings: [], provenance: ai }), /must not be empty/);
-});
-
 test('audit_submit still enforces the AI provenance rule', () => {
   const store = new TraceStore(':memory:');
   const req = seedRequirement(store);
@@ -269,4 +262,38 @@ test('audit_submit accepts an ordinary plain-language question', () => {
     provenance: ai,
   });
   assert.equal(written.length, 1);
+});
+
+test('an audit that finds nothing is recorded as one audit artifact', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  const recorded = submitFindings(store, {
+    requirementId: req.id,
+    findings: [],
+    provenance: { producer: 'ai', model: 'claude-haiku-4-5' } as any,
+  });
+  assert.equal(recorded.length, 1);
+  const [audit] = recorded;
+  assert.equal(audit.type, 'audit');
+  assert.equal(audit.content.findings, 0);
+  assert.equal(audit.content.rubricVersion, loadRubric().version);
+  assert.equal(audit.provenance.promptVersion, loadRubric().version);
+  assert.deepEqual(store.edgesFrom(audit.id).map((e) => [e.toArtifactId, e.relation]), [[req.id, 'derived_from']]);
+  assert.equal(store.list('finding').length, 0);
+});
+
+test('an audit with findings records only the findings', () => {
+  const store = new TraceStore(':memory:');
+  const req = seedRequirement(store);
+  submitFindings(store, {
+    requirementId: req.id,
+    findings: [{ category: 'AMB-VAGUE-QUANT', quote: 'quickly', question: 'How quick is quick?', confidence: 'high' }],
+    provenance: { producer: 'ai', model: 'claude-haiku-4-5' } as any,
+  });
+  assert.equal(store.list('audit').length, 0);
+});
+
+test('audit is a type only audit_submit may record', async () => {
+  const { assertRawRecordAllowed } = await import('../src/trace/store.ts');
+  assert.throws(() => assertRawRecordAllowed(new TraceStore(':memory:'), { type: 'audit' }), /audit_submit/);
 });

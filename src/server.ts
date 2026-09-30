@@ -126,10 +126,11 @@ export function createServer(store: TraceStore) {
         'the rubric, quote the requirement verbatim, and phrase `question` in plain language with ' +
         'no internal identifiers or system terminology; if any finding fails any check the whole ' +
         'submission is rejected and nothing is written. `promptVersion` is set by the server from ' +
-        'the rubric version, not by the caller.',
+        'the rubric version, not by the caller. Submit an empty list when no rule fires: that ' +
+        'records a clean audit, which is what clears a requirement edited since it was audited.',
       inputSchema: {
         requirementId: z.string(),
-        findings: z.array(AuditFinding).min(1),
+        findings: z.array(AuditFinding).describe('Empty when no rule fires: that records a clean audit.'),
         provenance: ProvenanceInput.describe('Who produced these. AI must give `model`.'),
       },
     },

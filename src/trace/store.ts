@@ -84,6 +84,7 @@ export type VerifyResult = {
 const GATED: Partial<Record<Artifact['type'], string>> = {
   finding: 'audit_submit (it checks the quote is verbatim and the rule exists)',
   answer: 'audit_answer',
+  audit: 'audit_submit',
   verdict: 'release_submit (it recomputes what blocks the release)',
 };
 
