@@ -141,7 +141,7 @@ Size: **S** ≈ 1–2 days, **M** ≈ 3–5 days, **L** ≈ 1–2 weeks (one dev
 
 **I5. Close the measurement loop** (M, from Langfuse score analytics)
 - `qa-spine rubric-report`: from review labels, 👍 rate and 👎 notes grouped by `promptVersion` × `model` × rule.
-- Then **rubric `ambiguity/2`**: add missing error path, clock/timezone, data rules (format, rounding, limits), permissions, contradictions between criteria. Ship it only if `rubric-report` shows it isn't worse than v1 on labelled data.
+- Then **rubric `ambiguity/2`** (shipped 2026-09-29 as `rubrics/candidates/ambiguity-2.json`, not the default, since no labelled data exists yet to compare it on): add missing error path, clock/timezone, data rules (format, rounding, limits), permissions, contradictions between criteria. Ship it only if `rubric-report` shows it isn't worse than v1 on labelled data.
 - This turns the README's claim that rubric edits are "measurable" into a command anyone can run.
 
 **I6. Exports** (S–M, from reqcov)
@@ -186,7 +186,7 @@ project; that check is the countermeasure).
 | **M2 ✅** | Trustworthy ledger | R3 hash chain + `verify`, R4 close gate holes | M | Small, and every later feature builds on the store being trustworthy |
 | **M3 ✅** | Requirements change | R1 versions + suspect links; importer update behaviour | M | Biggest correctness gap found in research; affects real use as soon as tickets are edited |
 | **M4 ✅** | Faster answers | I1 suggested answers, I2 `answer` CLI + actionable PR comment, I3 `status` | M | Adoption: once the gate blocks, the next thing users feel is how slow it is to unblock |
-| **M5** | Measurement | I5 `rubric-report`, then rubric `ambiguity/2` | M | Needs M4's answers and reviews to have data |
+| **M5 ✅** | Measurement | I5 `rubric-report`, then rubric `ambiguity/2` | M | Needs M4's answers and reviews to have data |
 | **M6** | Coverage + reporting | R5 coverage signal, I4 readiness view, I6 exports | M–L | Needs M1 test data |
 | **M7** | Teams | X1 bundle/merge, X2 importers, X3 MCP resources/prompts, R6 policy | M | Only matters once more than one person uses a store |
 | **Later** | `generate_fixtures` | X4 | L | |

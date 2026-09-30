@@ -349,6 +349,7 @@ usage: qa-spine [subcommand]
   gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
   ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
+  rubric-report [--json]  how often reviewers judged each rubric version's findings good
   verify                  check the ledger's hash chain — exit 0 intact, 1 tampered, 2 error
   help                    show this screen
 
@@ -369,6 +370,7 @@ const SUBCOMMANDS = new Set([
   'ingest-junit',
   'verify',
   'review-export',
+  'rubric-report',
 ]);
 
 if (invokedAsScript()) {
@@ -408,6 +410,12 @@ if (invokedAsScript()) {
       const { startInspector } = await import('./inspector/server.ts');
       await startInspector(store, port);
       console.error(`qa-spine inspector → http://127.0.0.1:${port}  (reading ${path})`);
+      break;
+    }
+    case 'rubric-report': {
+      const { rubricReport, renderRubricReport } = await import('./audit.ts');
+      const report = rubricReport(new TraceStore(path));
+      console.log(process.argv.includes('--json') ? JSON.stringify(report, null, 2) : renderRubricReport(report));
       break;
     }
     case 'review-export': {

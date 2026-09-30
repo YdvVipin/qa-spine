@@ -1,0 +1,83 @@
+{
+  "version": "ambiguity/2",
+  "rules": [
+    {
+      "id": "AMB-VAGUE-QUANT",
+      "name": "Unquantified adjective",
+      "test": "A degree adjective with no measurable threshold.",
+      "triggers": [
+        "fast",
+        "quick",
+        "quickly",
+        "scalable",
+        "robust",
+        "intuitive",
+        "seamless"
+      ],
+      "ask": "What measurable threshold makes this {term}?"
+    },
+    {
+      "id": "AMB-MISSING-ACTOR",
+      "name": "Missing actor",
+      "test": "Passive construction that omits who performs the action.",
+      "ask": "Who performs this \u2014 which user role or which service?"
+    },
+    {
+      "id": "AMB-OPEN-LIST",
+      "name": "Open-ended enumeration",
+      "test": "A list left deliberately incomplete.",
+      "triggers": [
+        "etc",
+        "and so on",
+        "including but not limited to",
+        "such as"
+      ],
+      "ask": "List the remaining cases, or state the rule that generates them."
+    },
+    {
+      "id": "AMB-UNTESTABLE",
+      "name": "No observable outcome",
+      "test": "No stated way to tell, from outside, whether this holds.",
+      "ask": "What would you observe to confirm this shipped correctly?"
+    },
+    {
+      "id": "AMB-MISSING-ERROR-PATH",
+      "name": "Missing failure behaviour",
+      "test": "Describes what happens when things work, and says nothing about what happens when a step fails, times out, or is refused.",
+      "ask": "What should happen when this fails \u2014 and who finds out?"
+    },
+    {
+      "id": "AMB-UNSTATED-CLOCK",
+      "name": "Unstated clock or time zone",
+      "test": "A deadline, duration or date with no stated starting point, calendar (business or calendar days) or time zone.",
+      "triggers": [
+        "within",
+        "days",
+        "hours",
+        "daily",
+        "by the end of",
+        "before",
+        "after"
+      ],
+      "ask": "Measured from when, in which time zone, and in business or calendar days?"
+    },
+    {
+      "id": "AMB-DATA-RULE",
+      "name": "Unstated data rule",
+      "test": "A value is captured, stored or shown with no format, limit, rounding or uniqueness rule.",
+      "ask": "What format, limits and rounding apply to this value, and must it be unique?"
+    },
+    {
+      "id": "AMB-PERMISSION",
+      "name": "Unstated permission",
+      "test": "An action with no statement of who is allowed to perform it, or what someone without permission sees.",
+      "ask": "Who is allowed to do this, and what does someone who is not allowed see?"
+    },
+    {
+      "id": "AMB-CONTRADICTION",
+      "name": "Contradiction between criteria",
+      "test": "Two statements in the same requirement that cannot both hold, or that give different values for the same thing.",
+      "ask": "These two statements disagree \u2014 which one is right?"
+    }
+  ]
+}

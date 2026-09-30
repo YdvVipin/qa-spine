@@ -59,7 +59,9 @@ const INSTRUCTIONS =
   'whole submission. `question` is for a human to answer: never return a rewritten ' +
   'requirement, and write it in plain language a project manager would understand — no ' +
   'internal identifiers, relation names, or system terminology, or the submission is ' +
-  'rejected. `confidence` is one of high, medium, low, unknown. Submit with audit_submit — ' +
+  'rejected. `confidence` is one of high, medium, low, unknown. Where a sensible default ' +
+  'exists, add `suggestedAnswer`: a plain-language answer a human can accept in one step, ' +
+  'which is then recorded as an assumption. Submit with audit_submit — ' +
   'with an empty findings list when no rule fires, which records that the audit was clean.';
 
 /** Loads a requirement and proves it is auditable. Shared by both audit tools. */
@@ -273,4 +275,86 @@ export function recordAnswer(
       ...(requirement ? [{ to: requirement.id, relation: 'derived_from' as const }] : []),
     ],
   });
+}
+
+export type RubricReportRow = {
+  promptVersion: string;
+  model: string;
+  rule: string;
+  findings: number;
+  reviewed: number;
+  good: number;
+  bad: number;
+  /** good / reviewed. Null when nothing was reviewed: no data is not the same as 0%. */
+  precision: number | null;
+};
+
+/**
+ * Turns the review labels the Inspector collects into "is this rubric version any good?":
+ * per rubric version, model and rule, how many findings were raised and how many a person
+ * marked good or bad. The latest review of a finding is the one that counts. Clean audits are
+ * counted apart, as the true negatives; without them a rubric that flags everything would look
+ * as good as one that flags only what matters.
+ *
+ * ponytail: precision only. Recall needs ambiguities the rubric missed, which nothing records
+ * yet. Upgrade: let a reviewer add a missed-ambiguity note on a clean audit, and count those.
+ */
+export function rubricReport(store: TraceStore): {
+  rows: RubricReportRow[];
+  cleanAudits: { promptVersion: string; model: string; count: number }[];
+} {
+  const rows = new Map<string, RubricReportRow>();
+  for (const f of store.list('finding', 1e9)) {
+    const promptVersion = f.provenance.promptVersion ?? '(none)';
+    const model = f.provenance.model ?? f.provenance.producer;
+    const rule = String(f.content.category ?? '(none)');
+    const key = JSON.stringify([promptVersion, model, rule]);
+    const row = rows.get(key) ?? { promptVersion, model, rule, findings: 0, reviewed: 0, good: 0, bad: 0, precision: null };
+    row.findings++;
+    const latest = store.linkedFrom(f.id, 'reviews', 'review')[0];
+    if (latest?.content.verdict === 'good' || latest?.content.verdict === 'bad') {
+      row.reviewed++;
+      row[latest.content.verdict]++;
+    }
+    rows.set(key, row);
+  }
+  for (const row of rows.values()) row.precision = row.reviewed ? row.good / row.reviewed : null;
+
+  const clean = new Map<string, { promptVersion: string; model: string; count: number }>();
+  for (const a of store.list('audit', 1e9)) {
+    const promptVersion = a.provenance.promptVersion ?? '(none)';
+    const model = a.provenance.model ?? a.provenance.producer;
+    const key = JSON.stringify([promptVersion, model]);
+    const entry = clean.get(key) ?? { promptVersion, model, count: 0 };
+    entry.count++;
+    clean.set(key, entry);
+  }
+
+  const order = (a: { promptVersion: string; model: string }, b: { promptVersion: string; model: string }) =>
+    a.promptVersion.localeCompare(b.promptVersion) || a.model.localeCompare(b.model);
+  return {
+    rows: [...rows.values()].sort((a, b) => order(a, b) || a.rule.localeCompare(b.rule)),
+    cleanAudits: [...clean.values()].sort(order),
+  };
+}
+
+export function renderRubricReport(report: ReturnType<typeof rubricReport>): string {
+  const pct = (p: number | null) => (p === null ? '—' : `${Math.round(p * 100)}%`);
+  const lines = [
+    '## Rubric report',
+    '',
+    'Precision is the share of reviewed findings a person marked good. Compare versions on the',
+    'same rule and model; a row with few reviews says little.',
+    '',
+    '| Rubric | Model | Rule | Findings | Reviewed | Good | Bad | Precision |',
+    '|---|---|---|---|---|---|---|---|',
+    ...report.rows.map((r) =>
+      `| ${r.promptVersion} | ${r.model} | ${r.rule} | ${r.findings} | ${r.reviewed} | ${r.good} | ${r.bad} | ${pct(r.precision)} |`,
+    ),
+  ];
+  if (report.cleanAudits.length) {
+    lines.push('', 'Clean audits (nothing found):');
+    for (const c of report.cleanAudits) lines.push(`- ${c.promptVersion} · ${c.model}: ${c.count} clean audit${c.count === 1 ? '' : 's'}`);
+  }
+  return lines.join('\n');
 }

@@ -128,6 +128,23 @@ from the exported review labels instead of a matter of taste.
 
 Point `QA_SPINE_RUBRICS` at your own directory to publish rubrics for your team.
 
+### Is a rubric edit an improvement?
+
+```bash
+qa-spine rubric-report          # Markdown table; --json for the data
+```
+
+Per rubric version, model and rule: how many findings were raised, how many a person reviewed
+in the Inspector, and what share of those they marked good. Clean audits are counted apart,
+as the true negatives. Precision only: recall needs ambiguities the rubric missed, which
+nothing records yet.
+
+`rubrics/candidates/ambiguity-2.json` is the next rubric: every v1 rule unchanged, plus missing
+failure behaviour, an unstated clock or time zone, unstated data rules, unstated permissions,
+and contradictions between criteria. It is a candidate, not the default, because nobody has
+labelled its output yet. To try it, copy it over the `ambiguity.json` in your rubrics
+directory, audit, review in the Inspector, and compare the two versions in `rubric-report`.
+
 The server never calls a model. `audit_requirement` hands the requirement and the rubric
 to the calling agent; `audit_submit` takes what comes back and refuses anything that
 cites an unknown rule, quotes text that is not in the requirement, or phrases `question`
@@ -388,8 +405,9 @@ empty rather than reporting a clean release.
   flagged suspect until re-audited, and a clean audit is recorded. Done.
 - **Faster answers.** Suggested answers, `qa-spine answer`, and a gate summary that prints the
   commands that unblock it. Done.
+- **Rubric measurement.** `qa-spine rubric-report`, and an `ambiguity/2` candidate rubric. Done.
 - **Next — see [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).**
-  Rubric measurement, coverage, team features.
+  Coverage, team features.
 - **Later — `generate_fixtures`.** Schema-validated test data with locale packs.
 
 ## License
