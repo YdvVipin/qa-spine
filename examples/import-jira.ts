@@ -8,7 +8,7 @@
 // knows what Jira is — this is a loader, not a feature.
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { TraceStore } from '../src/trace/store.ts';
+import { TraceStore, recordRequirement } from '../src/trace/store.ts';
 
 const { JIRA_SITE, JIRA_EMAIL, JIRA_TOKEN } = process.env;
 if (!JIRA_SITE || !JIRA_EMAIL || !JIRA_TOKEN) {
@@ -65,7 +65,9 @@ for (const issue of (await res.json()).issues ?? []) {
     skipped++;
     continue;
   }
-  store.record({
+  // Versioned, not duplicated: an unchanged ticket writes nothing, an edited one supersedes
+  // the version it replaces, so re-running an import is safe.
+  recordRequirement(store, {
     type: 'requirement',
     sourceRef: issue.key,
     content: { text, summary: issue.fields?.summary ?? '' },

@@ -111,6 +111,40 @@ export function assertRawRecordAllowed(
   }
 }
 
+/** JSON with object keys sorted, so `{a, b}` and `{b, a}` compare equal. */
+const canonical = (value: unknown): string =>
+  JSON.stringify(value, (_key, v) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
+
+/**
+ * How the raw write paths record anything, so a requirement is versioned rather than
+ * duplicated. For a requirement with a `sourceRef`: the same content as its newest current
+ * version writes nothing and returns that version; different content is recorded with a
+ * `supersedes` link to every current version — which also folds the duplicates older imports
+ * left behind into one line. Anything else goes straight to `store.record`.
+ */
+export function recordRequirement(store: TraceStore, input: Parameters<TraceStore['record']>[0]): Artifact {
+  const sourceRef = input.sourceRef;
+  if (input.type !== 'requirement' || !sourceRef) return store.record(input);
+  return store.transaction(() => {
+    const current = store
+      .bySourceRef([sourceRef])
+      .filter((a) => a.type === 'requirement' && !store.linkedFrom(a.id, 'supersedes', 'requirement').length);
+    const newest = current.at(-1);
+    if (newest && canonical(newest.content) === canonical(input.content)) return newest;
+    const links = [...(input.links ?? [])];
+    for (const version of current) {
+      if (!links.some((l) => l.to === version.id && l.relation === 'supersedes')) {
+        links.push({ to: version.id, relation: 'supersedes' });
+      }
+    }
+    return store.record({ ...input, links });
+  });
+}
+
 type Row = {
   id: string;
   type: string;

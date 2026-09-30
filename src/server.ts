@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeF
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs } from 'node:util';
-import { TraceStore, assertRawRecordAllowed } from './trace/store.ts';
+import { TraceStore, assertRawRecordAllowed, recordRequirement } from './trace/store.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
 import {
   auditRequirement,
@@ -72,7 +72,7 @@ export function createServer(store: TraceStore) {
     (args) => {
       try {
         assertRawRecordAllowed(store, args);
-        return json(store.record(args));
+        return json(recordRequirement(store, args));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
@@ -430,7 +430,7 @@ if (invokedAsScript()) {
         const store = new TraceStore(path);
         const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         assertRawRecordAllowed(store, payload);
-        console.log(JSON.stringify(store.record(payload)));
+        console.log(JSON.stringify(recordRequirement(store, payload)));
       } catch (err) {
         // One JSON object on stdout either way, so the caller never parses stderr.
         console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
