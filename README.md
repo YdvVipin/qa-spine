@@ -67,7 +67,7 @@ npx qa-spine demo            # one complete spine to look at, in a throwaway sto
 
 The Inspector is an **instrument for judging whether agent output is any good**, not a
 product dashboard. It is read-only, loopback-only, has no auth and no build step: one HTML
-file, one CSS file, one vanilla-JS module. Four views:
+file, one CSS file, one vanilla-JS module. Six views:
 
 - **Artifact list** — everything in the store, newest first, filterable by type, showing
   producer, model and confidence at a glance.
@@ -79,6 +79,10 @@ file, one CSS file, one vanilla-JS module. Four views:
 - **Audit queue** — every question phase 2 raised that nobody has answered, with the quote
   shown in context and a box to answer it. Answering appends an `answer` that supersedes the
   finding, so the chain view stops showing it red. The empty state is the goal.
+- **Readiness** — where each requirement stands, worst first: blocked, needs attention or
+  clear, optionally narrowed to the refs a change touches.
+- **Runs** — every recorded test run, newest first, with failed runs in red and flaky ones
+  marked, linked to the test's chain and its tickets. Filter to failed or flaky.
 
 Every AI artifact gets a 👍/👎 and a free-text note. The Inspector has two human-authored
 writes: this review, and audit answers. Agents answer through `audit_answer` instead,

@@ -189,3 +189,17 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
 .ready-blocked { color: #e0703f; font-weight: 600; }
 .ready-warning { color: #d9a441; font-weight: 600; }
 .ready-clear { color: #4caf7a; }
+
+/* --- runs --- */
+tr.run-failed td { color: var(--bad); }
+tr.run-failed { background: rgba(247, 118, 142, 0.07); }
+tr.run-failed td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+tr.run-flaky td.status { color: var(--warn); }
+tr.run-passed td.status { color: var(--good); }
+tr.run-skipped td { color: var(--dim); }
+.badge-flaky { color: var(--warn); margin-left: 0.4rem; }
+.dim { color: var(--dim); }
+.node.run-failed { border-left-color: var(--bad); }
+.node.run-flaky { border-left-color: var(--warn); }
+.node.run-passed { border-left-color: var(--good); }
+.node .flag.flag-warn { color: var(--warn); }
