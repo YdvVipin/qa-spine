@@ -280,6 +280,9 @@ JIRA_SITE=yourteam.atlassian.net JIRA_EMAIL=you@example.com JIRA_TOKEN=... \
   node examples/import-jira.ts 'project = PROJ AND fixVersion = "2026.7.3"'
 ```
 
+It uses Jira Cloud's `/rest/api/2/search/jql` and follows every page; `JIRA_API_URL` (the base
+URL, instead of `https://$JIRA_SITE`) and `JIRA_PAGE_SIZE` (default 100) are optional.
+
 GitHub Issues and Linear work the same way:
 
 ```bash
