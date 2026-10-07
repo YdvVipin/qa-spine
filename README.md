@@ -80,9 +80,10 @@ file, one CSS file, one vanilla-JS module. Four views:
   shown in context and a box to answer it. Answering appends an `answer` that supersedes the
   finding, so the chain view stops showing it red. The empty state is the goal.
 
-Every AI artifact gets a 👍/👎 and a free-text note. The Inspector has two human-authored
-writes: this review, and audit answers. Agents answer through `audit_answer` instead,
-recording their provenance. Export the accumulated labels:
+Every AI artifact gets a 👍/👎 and a free-text note. The Inspector has three human-authored
+writes: this review, audit answers, and [retractions](#retracting-a-mistake). Agents answer
+through `audit_answer` instead, recording their provenance, and cannot retract at all. Export
+the accumulated labels:
 
 ```bash
 node dist/server.js review-export > labels.jsonl
@@ -95,14 +96,53 @@ made the agents better or worse.
 
 ## The trace store
 
-Artifacts are `requirement | finding | test_case | test_run | defect | verdict | review | answer | audit | fixture`. Edges are
-`derived_from | tests | covers | verifies | contradicts | supersedes`, always directed from
+Artifacts are `requirement | finding | test_case | test_run | defect | verdict | review | answer | audit | fixture | retraction`. Edges are
+`derived_from | tests | covers | verifies | contradicts | supersedes | reviews | retracts`, always directed from
 the newer artifact to the older one.
 
 The store is **append-only, enforced by SQLite triggers** rather than by application code,
 so history survives someone opening the file with the `sqlite3` CLI. Nothing is ever
-updated or deleted; to retract an artifact you append a replacement and link it with
-`supersedes`. Both versions remain readable and the chain records that the change happened.
+updated or deleted. A requirement is corrected by recording it again, which appends a new
+version linked with `supersedes`; anything recorded by mistake is withdrawn with a
+[retraction](#retracting-a-mistake). Either way both remain readable and the chain records
+that the change happened.
+
+### Retracting a mistake
+
+```bash
+qa-spine retract test_run_8c1d22f0 --by a.rivera --reason "ingested the staging report by mistake"
+```
+
+appends a `retraction` naming who and why, with a `retracts` edge to the target. From then on
+the target counts nowhere that asks what is current: the gate and its test checks, requirement
+status and the readiness view, covering tests, open questions, the audit queue, the exports, and
+the Inspector's list, which hides it unless you press **show withdrawn**. The chain view keeps it,
+marked with who withdrew it. Nothing is removed, so `qa-spine verify` passes before and after.
+
+- **Undo** is retracting the retraction: `qa-spine retract retraction_… --by … --reason …`. Current
+  state is computed from the whole chain, so retracting the undo withdraws the target again.
+- **Both `--by` and `--reason` are required.** The Inspector's **Retract** button on an artifact's
+  page asks for both too.
+- **Findings and verdicts cannot be retracted.** A question is retired by answering it; a release
+  decision is a record of what was known at the time, so the fix is a new decision.
+- **What retracting does, by type.** A retracted answer reopens its question, which can then be
+  answered again. A retracted requirement version puts the version before it back in force, and
+  re-importing the withdrawn text records it afresh rather than handing back the withdrawn copy. A
+  retracted test case stops covering its requirement, and a retracted failing run stops failing it.
+- **It is never quiet.** Retracting is how a blocker can legitimately leave the gate, so the gate
+  lists every requirement, test or failed result withdrawn on the areas a change touches, with
+  the name, the reason and the command that undoes it, and `--record` copies that list onto the
+  verdict. The brief for that verdict shows it. A brief for an earlier verdict does not change.
+- **People only.** There is no MCP tool for it, so an agent cannot withdraw its own failing run.
+  `trace_record` and `record` refuse a `retraction` and a `retracts` link.
+
+**The name is not verified.** `--by` is whatever was typed, the same as `answer --by` and
+`gate --approved-by`, and the Inspector has no login: it is loopback-only, so anyone with a shell
+on the machine can use it. Treat the name as a claim on the record, not an identity.
+
+Erasing data that must not be kept, like a leaked secret or personal data, is a different job
+and not built yet: it needs a change to the chain format so a row's content can be destroyed
+without breaking `verify`.
 
 Triggers stop an edit, but not someone who drops the triggers first. So every artifact and
 edge written through qa-spine is also **hash-chained**: `sha256(previous hash + the row as
@@ -428,6 +468,12 @@ On the gate, a covering test whose **latest** run failed or errored blocks, exac
 unanswered question, and needs the same named override to ship over. A later passing run
 clears it; nothing is superseded, the newer fact wins. Skipped does not block.
 
+A run recorded through `trace_record` or `record` instead of `ingest-junit` can always block,
+but it clears a failure only when `provenance.approvedBy` names the person vouching for it.
+The gate then lists it as entered by hand, with that name. Without the rule, an agent could
+turn the gate green by recording "passed". Those raw paths also cannot claim to be a qa-spine
+tool. A run withdrawn with [`retract`](#retracting-a-mistake) counts for nothing.
+
 **Flaky tests are named, never excused.** A test that failed and passed on the same commit
 (`--commit`, default `git rev-parse HEAD`), or twice in one report with different outcomes, is
 labelled flaky in the gate output and the brief. It still blocks. Quarantining it
@@ -489,6 +535,11 @@ empty rather than reporting a clean release.
   over MCP, and optional human approval of AI answers. Done.
 - **Test data.** `fixtures_request` / `fixtures_submit`: schema-validated fixtures with locale
   packs. Done. That completes [the enhancement roadmap](docs/superpowers/plans/2026-09-29-enhancement-roadmap.md).
+- **Retract.** A named person withdraws a mistake with a reason; undo is retracting the
+  retraction; the gate reports every withdrawal. Done.
+- **Purge.** Erasing a leaked secret or personal data from the ledger, from the command line.
+  Needs chain format v2 (each row hashed through a salted content hash whose salt a purge
+  destroys), a guarded trigger, `secure_delete` and `VACUUM`, and `merge` that knows about it. Not started.
 
 ## License
 

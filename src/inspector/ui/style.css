@@ -189,3 +189,15 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
 .ready-blocked { color: #e0703f; font-weight: 600; }
 .ready-warning { color: #d9a441; font-weight: 600; }
 .ready-clear { color: #4caf7a; }
+
+/* Withdrawn: still readable, plainly not in force. The text flag carries the meaning; the dimming only supports it. */
+.withdrawn { opacity: 0.55; }
+.withdrawn td:nth-child(2), .node.withdrawn .summary { text-decoration: line-through; }
+.node.withdrawn { border-style: dashed; }
+.retract { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: stretch; }
+.retract input, .retract textarea {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 0.4rem 0.5rem; font: inherit;
+}
+.retract textarea { flex: 1 1 260px; min-height: 2.4rem; }
+.retract button { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font: inherit; }
+.retract button:hover { border-color: var(--bad); color: var(--bad); }

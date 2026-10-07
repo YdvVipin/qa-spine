@@ -16,12 +16,14 @@ export const ArtifactType = z.enum([
   'audit',
   /** Test data an agent generated for a test case or requirement, validated against a schema. */
   'fixture',
+  /** A person withdrawing an artifact recorded by mistake, with a reason. Undone by retracting it. */
+  'retraction',
 ]);
 
 /**
  * How two artifacts relate. Edge direction is always new -> existing:
  * a finding is `derived_from` a requirement, a test_case `covers` a requirement,
- * a test_run `verifies` a test_case, a verdict `supersedes` an earlier verdict.
+ * a test_run `verifies` a test_case, a requirement `supersedes` its previous version.
  */
 export const Relation = z.enum([
   'derived_from',
@@ -32,6 +34,11 @@ export const Relation = z.enum([
   'supersedes',
   /** A review judges the artifact it points at. Kept distinct so chain views can hide it. */
   'reviews',
+  /**
+   * A retraction withdraws its target from every "what is current" view, whatever the target's
+   * type. Kept apart from `supersedes`, which only requirements and findings honour.
+   */
+  'retracts',
 ]);
 
 /**

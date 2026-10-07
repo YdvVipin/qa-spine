@@ -7,8 +7,9 @@ import { Artifact, Edge, Provenance, type Chain, type Relation } from './schema.
 
 /**
  * Append-only trace store. Enforcement lives in SQLite triggers rather than in this
- * module, so history survives anyone poking the file with the `sqlite3` CLI. To retract
- * an artifact, append a replacement and link it with a `supersedes` edge.
+ * module, so history survives anyone poking the file with the `sqlite3` CLI. To correct a
+ * requirement, append a new version linked with `supersedes`; to withdraw anything recorded by
+ * mistake, a person appends a `retraction` (src/retract.ts). Nothing is ever removed.
  */
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -88,6 +89,7 @@ const GATED: Partial<Record<Artifact['type'], string>> = {
   audit: 'audit_submit',
   fixture: 'fixtures_submit (it validates the data against its schema)',
   verdict: 'release_submit (it recomputes what blocks the release)',
+  retraction: 'qa-spine retract or the Inspector (a named person withdraws it, with a reason)',
 };
 
 /**
@@ -101,11 +103,19 @@ const GATED: Partial<Record<Artifact['type'], string>> = {
  */
 export function assertRawRecordAllowed(
   store: TraceStore,
-  input: { type: Artifact['type']; links?: { to: string; relation: Relation }[] },
+  input: { type: Artifact['type']; links?: { to: string; relation: Relation }[]; provenance?: { tool?: string } },
 ): void {
   const gated = GATED[input.type];
   if (gated) throw new Error(`a ${input.type} cannot be recorded directly — use ${gated}`);
+  // The gate trusts a test result qa-spine's own ingest recorded more than one typed in by
+  // hand, so a raw write must not be able to claim to be qa-spine.
+  if (input.provenance?.tool?.trim().toLowerCase().startsWith('qa-spine')) {
+    throw new Error(`provenance.tool "${input.provenance.tool}" is reserved for qa-spine's own commands`);
+  }
   for (const link of input.links ?? []) {
+    if (link.relation === 'retracts') {
+      throw new Error(`cannot record a retracts link directly — use ${GATED.retraction}`);
+    }
     if (link.relation === 'supersedes' && store.get(link.to)?.type === 'finding') {
       throw new Error(
         `cannot supersede finding ${link.to} directly — answer it with audit_answer, which is what retires a question`,
@@ -123,19 +133,32 @@ export const canonical = (value: unknown): string =>
   );
 
 /**
+ * The requirements recorded under `sourceRef` that are in force: not retracted, and not
+ * replaced by a newer version that is itself in force. Retracting an edit therefore puts the
+ * version before it back. Normally one; more only where two imports raced or two stores merged.
+ */
+export const currentRequirements = (store: TraceStore, sourceRef: string): Artifact[] =>
+  store
+    .bySourceRef([sourceRef])
+    .filter(
+      (a) => a.type === 'requirement' && !store.isRetracted(a.id) && !store.linkedFrom(a.id, 'supersedes', 'requirement').length,
+    );
+
+/**
  * How the raw write paths record anything, so a requirement is versioned rather than
  * duplicated. For a requirement with a `sourceRef`: the same content as its newest current
  * version writes nothing and returns that version; different content is recorded with a
  * `supersedes` link to every current version — which also folds the duplicates older imports
  * left behind into one line. Anything else goes straight to `store.record`.
+ *
+ * A retracted copy is never current, so re-importing a ticket whose copy was retracted records
+ * it again rather than handing back the copy someone withdrew.
  */
 export function recordRequirement(store: TraceStore, input: Parameters<TraceStore['record']>[0]): Artifact {
   const sourceRef = input.sourceRef;
   if (input.type !== 'requirement' || !sourceRef) return store.record(input);
   return store.transaction(() => {
-    const current = store
-      .bySourceRef([sourceRef])
-      .filter((a) => a.type === 'requirement' && !store.linkedFrom(a.id, 'supersedes', 'requirement').length);
+    const current = currentRequirements(store, sourceRef);
     const newest = current.at(-1);
     if (newest && canonical(newest.content) === canonical(input.content)) return newest;
     const links = [...(input.links ?? [])];
@@ -488,8 +511,36 @@ export class TraceStore {
   }
 
   /**
-   * Findings nothing has superseded — the audit queue's worklist. Asked in SQL rather than
-   * by listing every finding and filtering in JS, which would be right only at today's size.
+   * The retraction currently withdrawing `id`, if any: one that targets it and has not itself
+   * been retracted. Undo is retracting the retraction, so this recurses down the undo chain;
+   * every edge points at something older, so the chain ends. With `asOf`, only retractions
+   * recorded by then count — what was withdrawn at that moment, for a record that must not move.
+   */
+  retractionOf(id: string, asOf?: string): Artifact | undefined {
+    const rows = this.db
+      .prepare(
+        `SELECT a.* FROM artifacts a JOIN edges e ON e.from_id = a.id
+          WHERE e.to_id = ? AND e.relation = 'retracts' AND a.type = 'retraction'
+            ${asOf ? 'AND a.created_at <= ?' : ''}
+          ORDER BY a.created_at DESC, a.rowid DESC`,
+      )
+      .all(...(asOf ? [id, asOf] : [id])) as Row[];
+    return rows.map(toArtifact).find((r) => !this.retractionOf(r.id, asOf));
+  }
+
+  isRetracted(id: string, asOf?: string): boolean {
+    return !!this.retractionOf(id, asOf);
+  }
+
+  /**
+   * Findings still waiting on an answer — the audit queue's worklist. Open means nothing in
+   * force supersedes it (a retracted answer reopens its question), and the requirement it came
+   * from is not retracted.
+   *
+   * SQL narrows to findings with no resolver, or only resolvers someone has tried to retract;
+   * the exact check, which has to follow undo chains, runs on that short list. The limit is
+   * applied after it, so a finding whose answer was retracted cannot be pushed out of the
+   * window by ones that only looked open.
    *
    * `requirementId`, when given, filters in the same query rather than after it: filtering
    * a capped, recency-ordered result in JS could drop a genuinely-open finding on the
@@ -505,28 +556,46 @@ export class TraceStore {
             SELECT 1 FROM edges d WHERE d.from_id = a.id AND d.relation = 'derived_from' AND d.to_id = ?
           )`
       : '';
-    const params = requirementId ? [requirementId, limit] : [limit];
     const rows = this.db
       .prepare(
         `SELECT * FROM artifacts a
           WHERE a.type = 'finding'
             AND NOT EXISTS (
               SELECT 1 FROM edges e WHERE e.to_id = a.id AND e.relation = 'supersedes'
+                AND NOT EXISTS (SELECT 1 FROM edges r WHERE r.to_id = e.from_id AND r.relation = 'retracts')
             )
             ${requirementFilter}
-          ORDER BY a.created_at DESC
-          LIMIT ?`,
+          ORDER BY a.created_at DESC, a.rowid DESC`,
       )
-      .all(...params);
-    return (rows as Row[]).map(toArtifact);
+      .all(...(requirementId ? [requirementId] : []));
+    return (rows as Row[])
+      .map(toArtifact)
+      .filter((f) => {
+        const out = this.edgesFrom(f.id);
+        const resolved = this.edgesTo(f.id).some((e) => e.relation === 'supersedes' && !this.isRetracted(e.fromArtifactId));
+        const withdrawn = out.some(
+          (e) => e.relation === 'derived_from' && this.get(e.toArtifactId)?.type === 'requirement' && this.isRetracted(e.toArtifactId),
+        );
+        return !resolved && !withdrawn;
+      })
+      .slice(0, limit);
   }
 
   /**
    * Artifacts of `type` with a `relation` edge pointing at `toId`, newest first — e.g. the
    * runs that verify a test case. `rowid` breaks ties: one ingest writes many artifacts
    * inside the same millisecond, and "latest" must still mean the last one written.
+   *
+   * Retracted artifacts are left out, so every "what is current" question asked through here
+   * respects a retraction without each caller remembering to. `includeRetracted` is for code
+   * that reports on retractions; `asOf` is for a record frozen at a moment, like the brief.
    */
-  linkedFrom(toId: string, relation: Relation, type: Artifact['type']): Artifact[] {
+  linkedFrom(
+    toId: string,
+    relation: Relation,
+    type: Artifact['type'],
+    opts: { includeRetracted?: boolean; asOf?: string } = {},
+  ): Artifact[] {
     const rows = this.db
       .prepare(
         `SELECT a.* FROM artifacts a JOIN edges e ON e.from_id = a.id
@@ -534,7 +603,8 @@ export class TraceStore {
           ORDER BY a.created_at DESC, a.rowid DESC`,
       )
       .all(toId, relation, type);
-    return (rows as Row[]).map(toArtifact);
+    const all = (rows as Row[]).map(toArtifact);
+    return opts.includeRetracted ? all : all.filter((a) => !this.isRetracted(a.id, opts.asOf));
   }
 
   /** Shared by edgesFrom/edgesTo. `column` is a closed union, never caller input. */

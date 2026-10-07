@@ -84,6 +84,11 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const dropped: string[] = Array.isArray(c.droppedFromAssessment) ? c.droppedFromAssessment : [];
   const suspect: string[] = Array.isArray(c.suspect) ? c.suspect : [];
   const untested: string[] = Array.isArray(c.untested) ? c.untested : [];
+  // Copied onto the verdict when it was recorded, so a later undo does not change this page.
+  const retracted: { type?: string; name?: string; by?: string; reason?: string; at?: string }[] = Array.isArray(c.retracted)
+    ? c.retracted
+    : [];
+  const WITHDRAWN_KIND: Record<string, string> = { requirement: 'Requirement', test_case: 'Test', test_run: 'Test result' };
   // Each answer that accepted a suggested default, beside the question it answered.
   const assumptions = (Array.isArray(c.assumptions) ? c.assumptions : []).flatMap((id: string) => {
     const answer = store.get(id);
@@ -158,7 +163,10 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
     const tcId = run && store.edgesFrom(run.id).find((e) => e.relation === 'verifies')?.toArtifactId;
     const tc = tcId ? store.get(tcId) : undefined;
     if (!run || !tc) return [];
-    const history = store.linkedFrom(tc.id, 'verifies', 'test_run').filter((r) => r.createdAt <= verdict.createdAt);
+    // asOf: a run retracted after the decision still counts here, as it did then.
+    const history = store
+      .linkedFrom(tc.id, 'verifies', 'test_run', { asOf: verdict.createdAt })
+      .filter((r) => r.createdAt <= verdict.createdAt);
     return [{ run, name: String(tc.content.name ?? 'an unnamed test'), flaky: isFlaky(history) }];
   });
   const testBlocks = failingTests
@@ -268,6 +276,22 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   }
 
   ${failingTests.length ? `<h2>Tests that were failing when this decision was made</h2>${testBlocks}` : ''}
+
+  ${
+    retracted.length
+      ? `<h2>Withdrawn as recorded by mistake</h2>
+  <p>A person withdrew these before the decision, so they did not count towards it.</p>
+  ${retracted
+    .map(
+      (r) => `<div class="q">
+        <div class="q-when">${esc(WITHDRAWN_KIND[String(r.type)] ?? 'Record')} · withdrawn by ${esc(r.by)}${r.at ? ` on ${esc(longDate(r.at))}` : ''}</div>
+        <div class="q-ask">${esc(r.name)}</div>
+        <p class="q-note">Reason given: ${esc(r.reason)}</p>
+      </div>`,
+    )
+    .join('')}`
+      : ''
+  }
 
   ${
     changed.length

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import type { TraceStore } from './trace/store.ts';
-import { assessReleaseRisk, recordVerdict, type FailingTest } from './release.ts';
+import { assessReleaseRisk, recordVerdict, type FailingTest, type Retracted } from './release.ts';
 import { renderBrief } from './brief.ts';
 
 export const TOOL = 'qa-spine gate';
@@ -53,6 +53,10 @@ export type GateResult = {
   failingTests: FailingTest[];
   /** Tests on changed areas that failed and passed on the same commit. Information only. */
   flakyTests: { testCaseId: string; requirementId: string; name: string }[];
+  /** Tests whose deciding result was typed in by hand rather than ingested, and who vouched for it. */
+  handEntered: { testCaseId: string; testRunId: string; requirementId: string; name: string; status: string; by: string }[];
+  /** What a person withdrew from these areas. Never blocks; always shown. */
+  retracted: Retracted[];
   /** Changed requirements edited since their last audit. A warning unless --block-on-suspect. */
   suspect: { requirementId: string; sourceRef: string | null; previousIds: string[] }[];
   /** Changed requirements no test covers in any version. A warning unless --require-coverage. */
@@ -202,6 +206,8 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     signals,
     failingTests,
     flakyTests: assessment.flaky,
+    handEntered: assessment.handEntered,
+    retracted: assessment.retracted,
     suspect: assessment.suspect,
     untested: assessment.untested,
     suspectBlocking,
@@ -314,6 +320,25 @@ export function renderSummary(r: GateResult): string {
       lines.push(bullet(`${t.sourceRef ?? 'no reference'} — ${t.name} (${t.status}${flaky})`));
       if (t.message) lines.push(`  > ${t.message.split('\n')[0]}`);
     }
+    lines.push('');
+  }
+
+  // A retraction is how a blocker can legitimately leave the gate, so it never leaves quietly.
+  if (r.retracted.length) {
+    const n = r.retracted.length;
+    const kind: Record<string, string> = { requirement: 'requirement', test_case: 'test', test_run: 'failed result' };
+    lines.push(`**${n} item${n === 1 ? '' : 's'} on areas this change touches ${n === 1 ? 'was' : 'were'} withdrawn as recorded by mistake:**`);
+    for (const x of r.retracted) {
+      lines.push(bullet(`${kind[x.type] ?? x.type} ${x.name} — withdrawn by ${x.by}: ${x.reason}`));
+      lines.push(`  To put it back: \`qa-spine retract ${x.retractionId} --by <your name> --reason "<why>"\``);
+    }
+    lines.push('');
+  }
+
+  if (r.handEntered.length) {
+    const n = r.handEntered.length;
+    lines.push(`**${n} test${n === 1 ? '' : 's'} decided by a result entered by hand, not from a test report:**`);
+    for (const t of r.handEntered) lines.push(bullet(`${t.name} — ${t.status}, vouched for by ${t.by}`));
     lines.push('');
   }
 

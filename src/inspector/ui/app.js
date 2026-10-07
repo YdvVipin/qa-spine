@@ -1,7 +1,7 @@
 // Three views, hash-routed, no build step. Nodes are built with the DOM API rather than
 // innerHTML because everything rendered here is model output or requirement text.
 
-const TYPES = ['requirement', 'finding', 'answer', 'test_case', 'test_run', 'defect', 'verdict', 'audit', 'fixture'];
+const TYPES = ['requirement', 'finding', 'answer', 'test_case', 'test_run', 'defect', 'verdict', 'audit', 'fixture', 'retraction'];
 const RELATION_COLOUR = {
   derived_from: '#7aa2f7',
   tests: '#7dcfff',
@@ -9,7 +9,10 @@ const RELATION_COLOUR = {
   verifies: '#bb9af7',
   contradicts: '#f7768e',
   supersedes: '#e0af68',
+  retracts: '#565f89',
 };
+/** Types with their own way out, mirrored from src/retract.ts so the button is not offered. */
+const NOT_RETRACTABLE = { finding: 'answer it in the audit queue instead', verdict: 'record a new decision instead' };
 
 const view = document.getElementById('view');
 const crumbs = document.getElementById('crumbs');
@@ -33,15 +36,23 @@ function summarise(a) {
     const flag = c.override ? '⚠ OVERRIDDEN ' : '';
     return `${flag}${String(c.verdict).toUpperCase()} — ${c.reason ?? ''}`;
   }
+  if (a.type === 'retraction') {
+    return `${c.undo ? 'UNDO' : 'WITHDREW'} ${c.targetType ?? ''} — ${c.reason ?? ''} (${c.retractedBy ?? '?'})`;
+  }
   return c.text ?? c.quote ?? c.name ?? c.reason ?? c.verdict ?? c.note ?? JSON.stringify(c);
 }
 
 // ---------------------------------------------------------------- list view
 
-async function listView(type) {
-  const { artifacts } = await get('/api/artifacts' + (type ? `?type=${type}` : ''));
+async function listView(type, showRetracted) {
+  const params = new URLSearchParams({ ...(type ? { type } : {}), ...(showRetracted ? { retracted: '1' } : {}) });
+  const { artifacts } = await get('/api/artifacts' + (params.size ? `?${params}` : ''));
   crumbs.replaceChildren(`${artifacts.length} artifact${artifacts.length === 1 ? '' : 's'}`);
 
+  const hashFor = (t, withdrawn) => {
+    const q = new URLSearchParams({ ...(t ? { type: t } : {}), ...(withdrawn ? { retracted: '1' } : {}) });
+    return q.size ? `#/?${q}` : '#/';
+  };
   const filters = h(
     'div',
     { className: 'filters' },
@@ -49,9 +60,14 @@ async function listView(type) {
       h('button', {
         textContent: t || 'all',
         ariaPressed: String((type ?? '') === t),
-        onclick: () => (location.hash = t ? `#/?type=${t}` : '#/'),
+        onclick: () => (location.hash = hashFor(t, showRetracted)),
       }),
     ),
+    h('button', {
+      textContent: 'show withdrawn',
+      ariaPressed: String(!!showRetracted),
+      onclick: () => (location.hash = hashFor(type, !showRetracted)),
+    }),
   );
 
   if (!artifacts.length) {
@@ -64,9 +80,9 @@ async function listView(type) {
   const rows = artifacts.map((a) =>
     h(
       'tr',
-      {},
+      { className: a.retracted ? 'withdrawn' : '' },
       h('td', {}, h('a', { className: 'type', href: `#/a/${a.id}`, textContent: a.type })),
-      h('td', {}, summarise(a).slice(0, 90)),
+      h('td', {}, (a.retracted ? `⊘ withdrawn by ${a.retracted.by} — ` : '') + summarise(a).slice(0, 90)),
       h('td', { className: 'producer-' + a.provenance.producer }, a.provenance.producer),
       h('td', {}, a.provenance.model ?? '—'),
       h('td', {}, a.content?.confidence ?? '—'),
@@ -186,6 +202,51 @@ function reviewBox(artifact, existing) {
   );
 }
 
+/**
+ * Withdraw this artifact, or — on a retraction — undo it. A name and a reason are both required;
+ * the server refuses either blank. The name is whatever is typed: the Inspector has no login.
+ */
+function retractBox(a, withdrawn) {
+  if (withdrawn) {
+    return h(
+      'section',
+      { className: 'panel' },
+      h('h2', {}, 'withdrawn'),
+      h('p', { className: 'flag verdict-bad' }, `⊘ withdrawn by ${withdrawn.by} on ${ago(withdrawn.at)}`),
+      h('p', {}, `Reason: ${withdrawn.reason}`),
+      h('p', {}, 'To put it back, undo ', h('a', { href: `#/a/${withdrawn.retractionId}`, textContent: 'the retraction' }), '.'),
+    );
+  }
+  if (NOT_RETRACTABLE[a.type]) return null;
+
+  const undo = a.type === 'retraction';
+  const by = h('input', { placeholder: 'your name', ariaLabel: 'your name' });
+  const reason = h('textarea', {
+    placeholder: undo ? 'why put it back? (required)' : 'why was this a mistake? (required)',
+    ariaLabel: 'reason (required)',
+  });
+  const status = h('span', { className: 'said' });
+  const submit = async () => {
+    const res = await fetch('/api/retract', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ artifactId: a.id, by: by.value, reason: reason.value }),
+    });
+    if (res.ok) return route();
+    status.textContent = (await res.json()).error ?? 'failed';
+    status.className = 'said verdict-bad';
+  };
+  return h(
+    'section',
+    { className: 'panel' },
+    h('h2', {}, undo ? 'undo this retraction' : 'recorded by mistake?'),
+    h('p', { className: 'said' }, undo
+      ? 'Puts the withdrawn artifact back in force. This is recorded too.'
+      : 'Withdraws it from every current view. Nothing is deleted; your name and reason are recorded.'),
+    h('div', { className: 'retract' }, by, reason, h('button', { textContent: undo ? 'Undo retraction' : 'Retract', onclick: submit }), status),
+  );
+}
+
 async function detailView(id) {
   const chain = await get('/api/chain/' + encodeURIComponent(id));
   if (chain.error) return view.replaceChildren(h('p', { className: 'empty' }, chain.error));
@@ -240,6 +301,7 @@ async function detailView(id) {
       provenancePanel(a),
     ),
     a.provenance.producer === 'ai' ? reviewBox(a, reviews) : '',
+    retractBox(a, chain.retracted?.[a.id]),
   );
 }
 
@@ -276,9 +338,11 @@ async function chainView(id) {
         { className: 'lane' },
         h('h3', {}, lane.type.replace('_', ' ')),
         lane.items.map((n) => {
+          const withdrawn = chain.retracted?.[n.id];
+          // A withdrawn answer resolves nothing, so its question shows as unresolved again.
           const unresolved =
             n.type === 'finding' &&
-            !edges.some((e) => e.toArtifactId === n.id && e.relation === 'supersedes');
+            !edges.some((e) => e.toArtifactId === n.id && e.relation === 'supersedes' && !chain.retracted?.[e.fromArtifactId]);
           // An answer produced by AI is marked in the graph, not just in its detail panel:
           // an agent resolving its own audit finding should be visible at a glance.
           const aiAnswer = n.type === 'answer' && n.provenance.producer === 'ai';
@@ -289,7 +353,8 @@ async function chainView(id) {
                 'node' +
                 (n.id === chain.root.id ? ' root' : '') +
                 (unresolved ? ' unresolved' : '') +
-                (aiAnswer ? ' ai-answer' : ''),
+                (aiAnswer ? ' ai-answer' : '') +
+                (withdrawn ? ' withdrawn' : ''),
               href: `#/a/${n.id}`,
             },
             h('span', { className: 'id' }, n.sourceRef ?? n.id),
@@ -298,6 +363,7 @@ async function chainView(id) {
             // Colour alone (var(--ai), shared with the `verifies` edge) is not a safe way to
             // mark an agent resolving its own finding — this text flag is the actual signal.
             aiAnswer ? h('span', { className: 'flag' }, '● ai-answered') : null,
+            withdrawn ? h('span', { className: 'flag' }, `⊘ withdrawn by ${withdrawn.by}`) : null,
           );
           cards.set(n.id, card);
           return card;
@@ -320,6 +386,7 @@ async function chainView(id) {
       ),
       h('span', { className: 'verdict-bad' }, '● finding nothing has resolved'),
       h('span', { className: 'producer-ai' }, '● ai-answered — an AI resolved its own finding'),
+      h('span', {}, '⊘ withdrawn — retracted by a person, not in force'),
     ),
   );
 
@@ -537,7 +604,7 @@ function route() {
   if (path === 'c') return chainView(decodeURIComponent(id));
   if (location.hash.startsWith('#/audit')) return auditView(query.get('show'));
   if (location.hash.startsWith('#/readiness')) return readinessView(query.get('changed'));
-  return listView(query.get('type'));
+  return listView(query.get('type'), query.get('retracted') === '1');
 }
 
 // Cross-fade view swaps with the native View Transitions API. route() is async for the

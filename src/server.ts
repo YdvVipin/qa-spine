@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeF
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs } from 'node:util';
-import { TraceStore, assertRawRecordAllowed, recordRequirement } from './trace/store.ts';
+import { TraceStore, assertRawRecordAllowed, currentRequirements, recordRequirement } from './trace/store.ts';
 import { fixturesRequest, submitFixtures } from './fixtures.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
 import {
@@ -63,10 +63,7 @@ export function createServer(store: TraceStore) {
       argsSchema: { sourceRef: z.string().describe('The ticket key, e.g. PROJ-42.') },
     },
     ({ sourceRef }) => {
-      const current = store
-        .bySourceRef([sourceRef])
-        .filter((a) => a.type === 'requirement' && !store.linkedFrom(a.id, 'supersedes', 'requirement').length)
-        .at(-1);
+      const current = currentRequirements(store, sourceRef).at(-1);
       const text = current
         ? `Audit requirement ${current.id} (${sourceRef}) for ambiguity. Call audit_requirement with ` +
           `requirementId "${current.id}", apply every rule in the rubric it returns, then record the result ` +
@@ -134,7 +131,10 @@ export function createServer(store: TraceStore) {
     {
       description:
         'Append an artifact to the trace store, optionally linking it to existing artifacts. ' +
-        'The store is append-only: to retract something, record a replacement with a `supersedes` link.',
+        'The store is append-only: to correct a requirement, record it again with the same sourceRef. ' +
+        'Withdrawing something recorded by mistake is for a person to do, with `qa-spine retract`; ' +
+        'there is no tool for it. A test_run that did not fail clears a failure only when ' +
+        '`provenance.approvedBy` names who vouches for it.',
       inputSchema: {
         type: ArtifactType,
         sourceRef: z
@@ -432,6 +432,8 @@ usage: qa-spine [subcommand]
                           approve an AI answer (needed under --require-human-answers)
   answer <findingId> <text> --by <name>
                           answer an open question (--accept-suggestion to take its default)
+  retract <id> --by <name> --reason <why>
+                          withdraw something recorded by mistake; retract the retraction to undo
   gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
   ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
@@ -459,6 +461,7 @@ const SUBCOMMANDS = new Set([
   'gate',
   'answer',
   'approve',
+  'retract',
   'ingest-junit',
   'verify',
   'review-export',
@@ -797,6 +800,26 @@ if (invokedAsScript()) {
         }
         const { recordAnswer } = await import('./audit.ts');
         console.log(JSON.stringify(recordAnswer(store, { findingId, answer, provenance: { producer: 'human' }, by: values.by })));
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+      }
+      break;
+    }
+
+    case 'retract': {
+      // A person withdrawing a mistake. Deliberately CLI and Inspector only — never an MCP
+      // tool — so an agent cannot withdraw its own failing run. --by is self-asserted.
+      try {
+        const { values, positionals } = parseArgs({
+          args: process.argv.slice(3),
+          options: { by: { type: 'string' }, reason: { type: 'string' } },
+          allowPositionals: true,
+        });
+        const [id] = positionals;
+        if (!id) throw new Error('usage: qa-spine retract <id> --by <name> --reason <why>');
+        const { recordRetraction } = await import('./retract.ts');
+        console.log(JSON.stringify(recordRetraction(new TraceStore(path), { id, by: values.by ?? '', reason: values.reason ?? '' })));
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
