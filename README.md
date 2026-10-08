@@ -428,6 +428,22 @@ On the gate, a covering test whose **latest** run failed or errored blocks, exac
 unanswered question, and needs the same named override to ship over. A later passing run
 clears it; nothing is superseded, the newer fact wins. Skipped does not block.
 
+Two rules decide which run counts (changed after 0.2.0, see the changelog):
+
+- **A healed test is judged by its replacement.** When a test case is replaced by a newer one
+  that `supersedes` it (a heal, a rewrite), only the newest case in that chain covers the
+  requirement and only its runs decide. The old case's last failure no longer blocks. Nothing
+  is deleted: the old case, its runs and the `supersedes` link stay in the ledger, in
+  `qa-spine chain` and in the Inspector.
+- **A pass typed in by hand does not clear a failure on its own.** A non-failing run recorded
+  with `provenance.producer: "human"` does not clear an earlier failed or errored run of the
+  same test. The gate keeps the block and says why: *latest pass was hand-recorded, not from a
+  tool run*. To ship on a hand check, a named person accepts the risk with the usual override:
+  `--override-reason "<why>" --approved-by <name>` on the gate, or an override with
+  `provenance.approvedBy` on `release_submit`. Runs recorded by a tool
+  (`producer: "tool"`, for example `ingest-junit` or a CI step) clear failures as before, so
+  record automated results as `tool`, not `human`.
+
 **Flaky tests are named, never excused.** A test that failed and passed on the same commit
 (`--commit`, default `git rev-parse HEAD`), or twice in one report with different outcomes, is
 labelled flaky in the gate output and the brief. It still blocks. Quarantining it
