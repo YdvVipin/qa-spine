@@ -276,6 +276,8 @@ export function createServer(store: TraceStore) {
       description:
         'Given the areas a release touches, return every unresolved requirement-stage finding ' +
         'and every covering test whose latest run failed on those areas, any flaky tests there, ' +
+        '(a test case a newer one supersedes is judged by its replacement; a pass recorded by a ' +
+        'human does not clear an earlier failure without a named override), ' +
         'plus the surrounding artifacts as unscored evidence. Makes no model ' +
         'call: reason over what it returns, then record your brief with `release_submit`. ' +
         'Every signal blocks a ship verdict.',
