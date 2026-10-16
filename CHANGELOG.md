@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changes in behaviour — release gate
+
+- **A superseded test case no longer decides.** Coverage, the readiness view and the gate now
+  follow `supersedes` between test cases to the newest case, so a healed test whose
+  replacement passes stops blocking. Before, the replaced case's last failed run blocked the
+  release forever. The old case and the `supersedes` link stay in the ledger and the Inspector.
+- **A hand-recorded pass no longer clears a failing test on its own.** A non-failing
+  `test_run` written through `trace_record` or `record` (any producer, not only `human`)
+  clears an earlier failure only when `provenance.approvedBy` names who vouches for it; the
+  gate lists it as entered by hand. Without a name the gate reports "latest pass was typed in
+  by hand with no one named in approvedBy" (`failingTests[].heldBecause`,
+  `failingTests[].handRecordedPass`). Ship over it with a named override
+  (`--override-reason` + `--approved-by`). Runs from `ingest-junit` work as before; raw
+  writes cannot claim its tool name.
+- **Retract.** `qa-spine retract <id> --by <name> --reason <why>` (CLI and Inspector only)
+  withdraws something recorded by mistake from every "what is current" path; retracting the
+  retraction undoes it. Nothing is deleted.
+
 ## 0.2.0 — 2026-09-30
 
 ### Changes in behaviour — read before upgrading from 0.1.0

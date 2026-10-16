@@ -475,11 +475,22 @@ On the gate, a covering test whose **latest** run failed or errored blocks, exac
 unanswered question, and needs the same named override to ship over. A later passing run
 clears it; nothing is superseded, the newer fact wins. Skipped does not block.
 
-A run recorded through `trace_record` or `record` instead of `ingest-junit` can always block,
-but it clears a failure only when `provenance.approvedBy` names the person vouching for it.
-The gate then lists it as entered by hand, with that name. Without the rule, an agent could
-turn the gate green by recording "passed". Those raw paths also cannot claim to be a qa-spine
-tool. A run withdrawn with [`retract`](#retracting-a-mistake) counts for nothing.
+Two rules decide which run counts (changed after 0.2.0, see the changelog):
+
+- **A healed test is judged by its replacement.** When a test case is replaced by a newer one
+  that `supersedes` it (a heal, a rewrite), only the newest case in that chain covers the
+  requirement and only its runs decide. The old case's last failure no longer blocks. Nothing
+  is deleted: the old case, its runs and the `supersedes` link stay in the ledger, in
+  `qa-spine chain` and in the Inspector.
+- **A pass typed in by hand clears a failure only with a name on it.** A run recorded through
+  `trace_record` or `record` instead of `ingest-junit` can always block, but it clears a
+  failure only when `provenance.approvedBy` names the person vouching for it; the gate then
+  lists it as entered by hand, with that name. Without one, the gate keeps the block and says
+  why: *latest pass was typed in by hand with no one named in approvedBy*. Otherwise an agent
+  could turn the gate green by recording "passed". Those raw paths also cannot claim to be a
+  qa-spine tool. Shipping over the failure instead takes the usual named override.
+
+A run withdrawn with [`retract`](#retracting-a-mistake) counts for nothing.
 
 **Flaky tests are named, never excused.** A test that failed and passed on the same commit
 (`--commit`, default `git rev-parse HEAD`), or twice in one report with different outcomes, is

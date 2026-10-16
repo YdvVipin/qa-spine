@@ -60,6 +60,13 @@ export type FailingTest = {
   message: string | null;
   /** Failed on a commit it also passed on. Reported, never excused: it still blocks. */
   flaky: boolean;
+  /**
+   * Present only when a later run was recorded by a person and did not clear this failure:
+   * the id of that hand-recorded run, and why it did not count. `testRunId` above is still
+   * the failing run that decides.
+   */
+  handRecordedPass?: string;
+  heldBecause?: string;
 };
 
 const BLOCKING_STATUS = new Set(['failed', 'error']);
@@ -85,6 +92,15 @@ export function decidingRun(runs: Artifact[]): Artifact | undefined {
     (r) => BLOCKING_STATUS.has(String(r.content.status)) || ingested(r) || !!r.provenance.approvedBy?.trim(),
   );
 }
+
+/** Why a hand-recorded pass leaves a failing test blocking. Shown in the gate and the brief. */
+export const HAND_RECORDED_PASS_HELD = 'latest pass was typed in by hand with no one named in approvedBy';
+
+/** A run that did not fail and is not allowed to clear a failure: exactly what decidingRun skips. */
+export const isHandRecordedPass = (run: Artifact): boolean => decidingRun([run]) === undefined;
+
+/** Flakiness is judged on the runs that count: a hand-recorded pass cannot make a failure look flaky either. */
+export const flakyOn = (runs: Artifact[]): boolean => isFlaky(runs.filter((r) => !isHandRecordedPass(r)));
 
 /** Flaky: ingest saw it pass and fail in one report, or two runs on one commit disagree. */
 export function isFlaky(runs: Artifact[]): boolean {
@@ -153,13 +169,44 @@ const isSuspect = (store: TraceStore, req: Artifact) =>
   !store.linkedFrom(req.id, 'derived_from', 'finding').length &&
   !store.linkedFrom(req.id, 'derived_from', 'audit').length;
 
-/** Test cases covering any version of the requirement, each once. */
-function coveringTests(store: TraceStore, req: Artifact): Artifact[] {
-  const tests = new Map<string, Artifact>();
-  for (const v of allVersions(store, req)) {
-    for (const tc of store.linkedFrom(v.id, 'covers', 'test_case')) tests.set(tc.id, tc);
+/**
+ * The current versions of a test case: itself if nothing replaced it, otherwise the test
+ * cases at the end of every `supersedes` chain that starts at it. A heal records a new test
+ * case that `supersedes` the one it repaired; from then on the replacement's runs decide,
+ * not the old case's last failure. Nothing is deleted or rewritten: the old case, its runs
+ * and the `supersedes` edge stay in the ledger, in `chain()` and in the Inspector. Like
+ * `isCurrent` for requirements, "replaced" means any test case points a `supersedes` edge at
+ * it; edges always run new -> existing, so the replacement is the later record.
+ */
+export function currentTestCases(store: TraceStore, tc: Artifact): Artifact[] {
+  const heads = new Map<string, Artifact>();
+  const seen = new Set([tc.id]);
+  const queue = [tc];
+  while (queue.length) {
+    const t = queue.shift()!;
+    const next = store.linkedFrom(t.id, 'supersedes', 'test_case');
+    if (!next.length) heads.set(t.id, t);
+    for (const n of next) {
+      if (seen.has(n.id)) continue;
+      seen.add(n.id);
+      queue.push(n);
+    }
   }
+  // Only a cycle (possible through store.link, never through a heal) leaves no head. Fall
+  // back to the case itself rather than letting a covering test silently vanish.
+  return heads.size ? [...heads.values()] : [tc];
+}
+
+/** Each test case replaced by its current version(s), each once. */
+function currentOf(store: TraceStore, cases: Artifact[]): Artifact[] {
+  const tests = new Map<string, Artifact>();
+  for (const tc of cases) for (const cur of currentTestCases(store, tc)) tests.set(cur.id, cur);
   return [...tests.values()];
+}
+
+/** Current test cases covering any version of the requirement, each once. */
+function coveringTests(store: TraceStore, req: Artifact): Artifact[] {
+  return currentOf(store, allVersions(store, req).flatMap((v) => store.linkedFrom(v.id, 'covers', 'test_case')));
 }
 
 export type RequirementStatus = {
@@ -215,7 +262,7 @@ export function requirementStatus(
         assumptions: answers.filter((a) => a.content.assumption === true).length,
         tests: tests.length,
         failing,
-        flaky: runs.filter((r) => isFlaky(r)).length,
+        flaky: runs.filter(flakyOn).length,
         suspect,
         untested,
       };
@@ -288,17 +335,21 @@ export function assessReleaseRisk(
   );
 
   // The latest run decides: a later pass clears an earlier failure without superseding it.
-  // Every covering test counts, whoever recorded it, not only ingested ones — but a pass typed
-  // in by hand clears only with a name on it (decidingRun), and is reported in `handEntered`.
+  // Two exceptions. A test case a heal replaced no longer decides anything; its current
+  // version does (`currentTestCases`). And every covering test counts, whoever recorded it,
+  // not only ingested ones — but a pass typed in by hand clears only with a name on it
+  // (decidingRun), and is reported in `handEntered`; an unnamed one is `heldPass` below.
   const flaky: { testCaseId: string; requirementId: string; name: string }[] = [];
   const handEntered: { testCaseId: string; testRunId: string; requirementId: string; name: string; status: string; by: string }[] = [];
   const testSignals: RiskSignal[] = requirements.flatMap((req) =>
-    store.linkedFrom(req.id, 'covers', 'test_case').flatMap((tc) => {
+    currentOf(store, store.linkedFrom(req.id, 'covers', 'test_case')).flatMap((tc) => {
       const runs = store.linkedFrom(tc.id, 'verifies', 'test_run');
       const latest = decidingRun(runs);
+      // Anything newer than the deciding run is an unnamed hand-entered pass it skipped.
+      const heldPass = latest && runs[0] !== latest ? runs[0] : null;
       if (!latest) return [];
       const name = String(tc.content.name ?? tc.sourceRef ?? tc.id);
-      const unreliable = isFlaky(runs);
+      const unreliable = flakyOn(runs);
       if (unreliable) flaky.push({ testCaseId: tc.id, requirementId: req.id, name });
       const status = String(latest.content.status);
       if (!BLOCKING_STATUS.has(status) && !ingested(latest)) {
@@ -325,6 +376,7 @@ export function assessReleaseRisk(
             status,
             message: typeof latest.content.message === 'string' ? latest.content.message : null,
             flaky: unreliable,
+            ...(heldPass ? { handRecordedPass: heldPass.id, heldBecause: HAND_RECORDED_PASS_HELD } : {}),
           },
         },
       ];
@@ -532,7 +584,7 @@ export function recordVerdict(
       .map((s) =>
         s.kind === 'unresolved_finding_on_changed_area'
           ? `${s.detail.findingId} (${s.detail.sourceRef ?? 'no sourceRef'})`
-          : `${s.detail.testRunId} (${s.detail.name}${s.detail.flaky ? ', flaky' : ''})`,
+          : `${s.detail.testRunId} (${s.detail.name}${s.detail.flaky ? ', flaky' : ''}${s.detail.heldBecause ? `, ${s.detail.heldBecause}` : ''})`,
       )
       .join(', ');
     throw new Error(

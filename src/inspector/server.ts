@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { TraceStore } from '../trace/store.ts';
 import { ArtifactType } from '../trace/schema.ts';
 import { openQuestions, recordAnswer } from '../audit.ts';
-import { isFlaky, requirementStatus } from '../release.ts';
+import { flakyOn, requirementStatus } from '../release.ts';
 import { recordRetraction } from '../retract.ts';
 import type { Artifact } from '../trace/schema.ts';
 
@@ -108,7 +108,7 @@ export function createInspector(store: TraceStore): Server {
       }
 
       // Test runs, newest first, each joined to its test and tickets here so the runs view
-      // makes one request. Flaky uses Readiness's isFlaky, so the two views always agree.
+      // makes one request. Flaky uses Readiness's flakyOn, so the two views always agree.
       if (req.method === 'GET' && url.pathname === '/api/runs') {
         const raw = Number(url.searchParams.get('limit'));
         const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 500) : 200; // 500 = the /api/artifacts cap
@@ -127,7 +127,7 @@ export function createInspector(store: TraceStore): Server {
             // A test can cover several versions of one requirement: one ticket each.
             tickets: [...new Map(reqs.map((r) => [r.sourceRef, { ref: r.sourceRef, requirementId: r.id }])).values()],
             status: String(c.status ?? 'unknown'),
-            flaky: c.flaky === true || (tc ? isFlaky(store.linkedFrom(tc.id, 'verifies', 'test_run')) : false),
+            flaky: c.flaky === true || (tc ? flakyOn(store.linkedFrom(tc.id, 'verifies', 'test_run')) : false),
             release: String(c.runRef ?? run.sourceRef ?? '—'),
             commit: typeof c.commit === 'string' ? c.commit : null,
             recordedAt: run.createdAt,

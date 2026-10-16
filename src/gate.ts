@@ -319,6 +319,10 @@ export function renderSummary(r: GateResult): string {
       const flaky = t.flaky ? ', flaky: it also passed on the same commit' : '';
       lines.push(bullet(`${t.sourceRef ?? 'no reference'} — ${t.name} (${t.status}${flaky})`));
       if (t.message) lines.push(`  > ${t.message.split('\n')[0]}`);
+      // A later pass exists but was typed in by a person, so it did not clear this failure.
+      if (t.heldBecause) {
+        lines.push(`  Not cleared: ${t.heldBecause}. It counts only with a named approver and a reason (see below).`);
+      }
     }
     lines.push('');
   }
