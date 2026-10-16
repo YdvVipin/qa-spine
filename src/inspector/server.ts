@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { TraceStore } from '../trace/store.ts';
 import { ArtifactType } from '../trace/schema.ts';
 import { openQuestions, recordAnswer } from '../audit.ts';
-import { requirementStatus } from '../release.ts';
+import { isFlaky, requirementStatus } from '../release.ts';
 import { recordRetraction } from '../retract.ts';
 import type { Artifact } from '../trace/schema.ts';
 
@@ -105,6 +105,37 @@ export function createInspector(store: TraceStore): Server {
       if (req.method === 'GET' && url.pathname === '/api/readiness') {
         const changed = url.searchParams.get('changed')?.split(',').map((r) => r.trim()).filter(Boolean);
         return send(200, { rows: requirementStatus(store, changed?.length ? changed : undefined) });
+      }
+
+      // Test runs, newest first, each joined to its test and tickets here so the runs view
+      // makes one request. Flaky uses Readiness's isFlaky, so the two views always agree.
+      if (req.method === 'GET' && url.pathname === '/api/runs') {
+        const raw = Number(url.searchParams.get('limit'));
+        const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 500) : 200; // 500 = the /api/artifacts cap
+        // A withdrawn run is left out, as in /api/artifacts; isFlaky's linkedFrom skips them too.
+        const rows = store.list('test_run', limit).filter((run) => !store.isRetracted(run.id)).map((run) => {
+          const tcId = store.edgesFrom(run.id).find((e) => e.relation === 'verifies')?.toArtifactId;
+          const tc = tcId ? store.get(tcId) : undefined;
+          const reqs = tc
+            ? store.edgesFrom(tc.id).filter((e) => e.relation === 'covers').flatMap((e) => store.get(e.toArtifactId) ?? [])
+            : [];
+          const c = run.content;
+          return {
+            runId: run.id,
+            testCaseId: tc?.id ?? null,
+            test: String(tc?.content.name ?? tc?.sourceRef ?? '—'),
+            // A test can cover several versions of one requirement: one ticket each.
+            tickets: [...new Map(reqs.map((r) => [r.sourceRef, { ref: r.sourceRef, requirementId: r.id }])).values()],
+            status: String(c.status ?? 'unknown'),
+            flaky: c.flaky === true || (tc ? isFlaky(store.linkedFrom(tc.id, 'verifies', 'test_run')) : false),
+            release: String(c.runRef ?? run.sourceRef ?? '—'),
+            commit: typeof c.commit === 'string' ? c.commit : null,
+            recordedAt: run.createdAt,
+            durationSec: c.time != null ? Number(c.time) : null,
+            message: typeof c.message === 'string' ? c.message.split('\n')[0].slice(0, 300) : '',
+          };
+        });
+        return send(200, { rows });
       }
 
       if (req.method === 'GET' && url.pathname === '/api/open') {

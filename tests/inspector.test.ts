@@ -2,8 +2,10 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { TraceStore } from '../src/trace/store.ts';
-import { createInspector } from '../src/inspector/server.ts';
+import { createInspector, startInspector } from '../src/inspector/server.ts';
 import { reviewExport } from '../src/server.ts';
+import { ingestJunit } from '../src/junit.ts';
+import { recordRetraction } from '../src/retract.ts';
 
 const ai = { producer: 'ai' as const, model: 'claude-opus-5', promptVersion: 'sha256:abc' };
 
@@ -134,4 +136,104 @@ test('review-export joins each label to the artifact and model that produced it'
 
 test('review-export on an empty store produces nothing, not a blank line', () => {
   assert.equal(reviewExport(new TraceStore(':memory:')), '');
+});
+
+/** A one-suite JUnit report; each case is [name, failure message or null]. */
+const junit = (...cases: [string, string | null][]) =>
+  `<testsuite name="s">${cases
+    .map(([name, failure]) =>
+      `<testcase classname="refund.spec.ts" name="${name}" time="0.5">${failure === null ? '' : `<failure message="${failure}"/>`}</testcase>`)
+    .join('')}</testsuite>`;
+
+test('the runs endpoint joins each run to its test and ticket, newest first', async (t) => {
+  const store = new TraceStore(':memory:');
+  const { req } = seed(store);
+  ingestJunit(store, {
+    reports: [{ file: 'a.xml', xml: junit(['PROJ-7 refund completes', null], ['PROJ-7 refund emails', 'expected 1 email, got 0']) }],
+    runRef: 'r1',
+    commit: 'aaa111',
+  });
+  const api = await serve(store, t);
+
+  const { rows } = await (await api('/api/runs')).json();
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].test, 'PROJ-7 refund emails', 'newest first');
+  assert.deepEqual(rows[0].tickets, [{ ref: 'PROJ-7', requirementId: req.id }]);
+  assert.equal(rows[0].status, 'failed');
+  assert.equal(rows[0].flaky, false);
+  assert.equal(rows[0].release, 'r1');
+  assert.equal(rows[0].commit, 'aaa111');
+  assert.equal(rows[0].message, 'expected 1 email, got 0');
+  assert.equal(rows[0].durationSec, 0.5);
+  assert.equal(rows[1].test, 'PROJ-7 refund completes');
+  assert.equal(rows[1].status, 'passed');
+});
+
+test('the runs endpoint marks a run flaky the same way Readiness does', async (t) => {
+  const store = new TraceStore(':memory:');
+  seed(store);
+  // The same test passing and failing in one ingest: one run, worst status, flaky.
+  ingestJunit(store, {
+    reports: [{ file: 'a.xml', xml: junit(['PROJ-7 refund races', null], ['PROJ-7 refund races', 'timeout']) }],
+    runRef: 'r1',
+    commit: 'aaa111',
+  });
+  const api = await serve(store, t);
+  let { rows } = await (await api('/api/runs')).json();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'failed');
+  assert.equal(rows[0].flaky, true);
+
+  // A later pass on the same commit is still flaky: isFlaky looks at every run of the test.
+  ingestJunit(store, { reports: [{ file: 'b.xml', xml: junit(['PROJ-7 refund races', null]) }], runRef: 'r2', commit: 'aaa111' });
+  ({ rows } = await (await api('/api/runs')).json());
+  assert.equal(rows[0].status, 'passed');
+  assert.equal(rows[0].flaky, true);
+});
+
+test('the runs endpoint leaves out a withdrawn run, as the artifact list does', async (t) => {
+  const store = new TraceStore(':memory:');
+  seed(store);
+  ingestJunit(store, { reports: [{ file: 'a.xml', xml: junit(['PROJ-7 refund emails', 'wrong env']) }], runRef: 'r1' });
+  const [run] = store.list('test_run');
+  recordRetraction(store, { id: run.id, by: 'Vipin', reason: 'ran against staging by mistake' });
+  const api = await serve(store, t);
+  assert.deepEqual(await (await api('/api/runs')).json(), { rows: [] });
+});
+
+test('an unkeyed test has no tickets, and an empty store has no runs', async (t) => {
+  const store = new TraceStore(':memory:');
+  const api = await serve(store, t);
+  assert.deepEqual(await (await api('/api/runs')).json(), { rows: [] });
+
+  ingestJunit(store, { reports: [{ file: 'a.xml', xml: junit(['renders the footer', null]) }] });
+  const { rows } = await (await api('/api/runs')).json();
+  assert.deepEqual(rows[0].tickets, []);
+});
+
+test('the runs endpoint takes a limit, and falls back or caps rather than erroring', async (t) => {
+  const store = new TraceStore(':memory:');
+  ingestJunit(store, { reports: [{ file: 'a.xml', xml: junit(['one', null], ['two', null], ['three', null]) }] });
+  const api = await serve(store, t);
+  assert.equal((await (await api('/api/runs?limit=1')).json()).rows.length, 1);
+  for (const limit of ['0', 'abc', '99999', '-3', '1.5']) {
+    const res = await api(`/api/runs?limit=${limit}`);
+    assert.equal(res.status, 200, limit);
+    assert.equal((await res.json()).rows.length, 3, limit);
+  }
+});
+
+test('the inspector still listens on loopback only', async (t) => {
+  const s = await startInspector(new TraceStore(':memory:'), 0);
+  t.after(() => new Promise<void>((r) => s.close(() => r())));
+  assert.equal((s.address() as AddressInfo).address, '127.0.0.1');
+});
+
+test('the UI ships the runs view', async (t) => {
+  const api = await serve(new TraceStore(':memory:'), t);
+  const app = await (await api('/app.js')).text();
+  assert.ok(app.includes("'#/runs'"), 'app.js routes #/runs');
+  assert.ok(app.includes("'/api/runs'"), 'app.js fetches /api/runs');
+  assert.ok((await (await api('/style.css')).text()).includes('.run-failed'));
+  assert.ok((await (await api('/')).text()).includes('href="#/runs"'));
 });

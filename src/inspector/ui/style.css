@@ -201,3 +201,17 @@ mark { background: rgba(247, 118, 142, 0.28); color: inherit; padding: 0 2px; bo
 .retract textarea { flex: 1 1 260px; min-height: 2.4rem; }
 .retract button { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font: inherit; }
 .retract button:hover { border-color: var(--bad); color: var(--bad); }
+
+/* --- runs --- */
+tr.run-failed td { color: var(--bad); }
+tr.run-failed { background: rgba(247, 118, 142, 0.07); }
+tr.run-failed td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+tr.run-flaky td.status { color: var(--warn); }
+tr.run-passed td.status { color: var(--good); }
+tr.run-skipped td { color: var(--dim); }
+.badge-flaky { color: var(--warn); margin-left: 0.4rem; }
+.dim { color: var(--dim); }
+.node.run-failed { border-left-color: var(--bad); }
+.node.run-flaky { border-left-color: var(--warn); }
+.node.run-passed { border-left-color: var(--good); }
+.node .flag.flag-warn { color: var(--warn); }
