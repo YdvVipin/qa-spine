@@ -1,6 +1,6 @@
 import type { TraceStore } from './trace/store.ts';
 import type { Artifact } from './trace/schema.ts';
-import { isFlaky } from './release.ts';
+import { isFlaky, isHandRecordedPass } from './release.ts';
 
 /**
  * Renders one recorded verdict as a self-contained page for a non-technical reader.
@@ -159,17 +159,28 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
     const tc = tcId ? store.get(tcId) : undefined;
     if (!run || !tc) return [];
     const history = store.linkedFrom(tc.id, 'verifies', 'test_run').filter((r) => r.createdAt <= verdict.createdAt);
-    return [{ run, name: String(tc.content.name ?? 'an unnamed test'), flaky: isFlaky(history) }];
+    // A pass typed in by a person after this failure did not clear it (decidingRun in
+    // release.ts). Say so, or "last run" reads as false next to a later pass in the record.
+    const handPassLater = history.some((r) => r.id !== run.id && isHandRecordedPass(r) && r.createdAt >= run.createdAt);
+    return [
+      {
+        run,
+        name: String(tc.content.name ?? 'an unnamed test'),
+        flaky: isFlaky(history.filter((r) => !isHandRecordedPass(r))),
+        handPassLater,
+      },
+    ];
   });
   const testBlocks = failingTests
-    .map(({ run, name, flaky }) => {
+    .map(({ run, name, flaky, handPassLater }) => {
       const message = String(run.content.message ?? '').trim();
       return `
       <div class="q">
-        <div class="q-when">Last run on ${esc(longDate(run.createdAt))}${run.content.status === 'error' ? ' · could not run to completion' : ''}</div>
+        <div class="q-when">${handPassLater ? 'Last counted run' : 'Last run'} on ${esc(longDate(run.createdAt))}${run.content.status === 'error' ? ' · could not run to completion' : ''}</div>
         <div class="q-ask">${esc(name)}</div>
         ${message ? `<p class="q-quote">${esc(message)}</p>` : ''}
         ${flaky ? '<p class="q-note">This test also passed on the same version of the code, so it may be unreliable rather than a real fault.</p>' : ''}
+        ${handPassLater ? '<p class="q-note">A later pass was entered by hand rather than coming from a test run, so it did not count without a named approver.</p>' : ''}
       </div>`;
     })
     .join('');

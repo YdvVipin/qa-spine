@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changes in behaviour — release gate
+
+- **A superseded test case no longer decides.** Coverage, the readiness view and the gate now
+  follow `supersedes` between test cases to the newest case, so a healed test whose
+  replacement passes stops blocking. Before, the replaced case's last failed run blocked the
+  release forever. The old case and the `supersedes` link stay in the ledger and the Inspector.
+- **A hand-recorded pass no longer clears a failing test.** A non-failing `test_run` with
+  `producer: "human"` does not clear an earlier failure; the gate reports
+  "latest pass was hand-recorded, not from a tool run" (`failingTests[].heldBecause`,
+  `failingTests[].handRecordedPass`). Ship over it with a named override
+  (`--override-reason` + `--approved-by`). Tool-recorded runs work as before. If your
+  pipeline records its own results as `human`, switch it to `producer: "tool"` with a
+  `tool` name, or its passes will hold.
+
 ## 0.2.0 — 2026-09-30
 
 ### Changes in behaviour — read before upgrading from 0.1.0
