@@ -20,6 +20,18 @@ if (!jql) {
   console.error('usage: node examples/import-jira.ts "<jql>"');
   process.exit(1);
 }
+const pageSize = Number(process.env.JIRA_PAGE_SIZE ?? 100);
+if (!Number.isInteger(pageSize) || pageSize < 1) {
+  console.error('usage: JIRA_PAGE_SIZE must be a positive integer');
+  process.exit(1);
+}
+// Overridable so tests can point the importer at a local fake.
+const base = process.env.JIRA_API_URL ?? `https://${JIRA_SITE}`;
+
+function fail(msg: string): never {
+  console.error(msg);
+  process.exit(1);
+}
 
 // M4: `dirname()` from node:path, not a regex — `resolve()` first so a slash-free
 // QA_SPINE_DB (e.g. `trace.db`) still has a real parent directory to create. A regex like
@@ -30,36 +42,48 @@ const path = resolve(process.env.QA_SPINE_DB ?? '.qa-spine/trace.db');
 mkdirSync(dirname(path), { recursive: true });
 const store = new TraceStore(path);
 
-// v2, not v3: v3 returns `description` as Atlassian Document Format JSON, which would feed
-// structural noise to the ambiguity rubric. v2 returns a plain string.
-//
-// ponytail: one page, maxResults=50, no pagination. Enough to audit a release. If you need
-// more, follow `startAt` until `total` is reached. Atlassian has also been migrating
-// /search to /search/jql — if this 404s or 410s, that is the line to change.
-const url =
-  `https://${JIRA_SITE}/rest/api/2/search` +
-  `?jql=${encodeURIComponent(jql)}&maxResults=50&fields=summary,description`;
-
-const res = await fetch(url, {
-  headers: {
-    authorization: `Basic ${Buffer.from(`${JIRA_EMAIL}:${JIRA_TOKEN}`).toString('base64')}`,
-    accept: 'application/json',
-  },
-});
-if (!res.ok) {
-  console.error(`jira ${res.status}: ${(await res.text()).slice(0, 400)}`);
-  process.exit(1);
+// Jira Cloud's v2 enhanced search (/rest/api/2/search/jql; the old /search returns 410).
+// It pages by `nextPageToken` (no `startAt`, no `total`) until `isLast`, and returns ids
+// only unless `fields` is explicit. v2, not v3: v3 returns `description` as Atlassian
+// Document Format JSON, which would feed structural noise to the ambiguity rubric; v2
+// returns a wiki-markup string. Every page is fetched before anything is written, so a
+// failure on page 2 records nothing in this append-only store.
+const headers = {
+  authorization: `Basic ${Buffer.from(`${JIRA_EMAIL}:${JIRA_TOKEN}`).toString('base64')}`,
+  accept: 'application/json',
+};
+const MAX_PAGES = 100; // a guard, not a feature: stops a server that keeps sending tokens
+const issues: any[] = [];
+const seenTokens = new Set<string>();
+let token: string | undefined;
+for (let page = 1; ; page++) {
+  if (page > MAX_PAGES) fail(`stopped after ${MAX_PAGES} pages; narrow the JQL`);
+  const params = new URLSearchParams({ jql, maxResults: String(pageSize), fields: 'summary,description' });
+  if (token) params.set('nextPageToken', token);
+  const res = await fetch(`${base}/rest/api/2/search/jql?${params}`, { headers });
+  if (!res.ok) fail(`jira ${res.status}: ${(await res.text()).slice(0, 400)}`);
+  const body = await res.json();
+  issues.push(...(body.issues ?? []));
+  // A short page is not the last page; only the token and `isLast` decide that.
+  token = typeof body.nextPageToken === 'string' && body.nextPageToken ? body.nextPageToken : undefined;
+  if (!token || body.isLast === true) break;
+  if (seenTokens.has(token)) fail('jira returned the same nextPageToken twice; stopping');
+  seenTokens.add(token);
 }
 
 let imported = 0;
 let skipped = 0;
-for (const issue of (await res.json()).issues ?? []) {
-  // M5: only a string is accepted. v3 (and the /search/jql migration noted above) returns
-  // `description` as Atlassian Document Format JSON, and `String({...})` stringifies to the
-  // non-blank '[object Object]' — that would pass the blank check below and get recorded
-  // permanently into this append-only store.
+let skippedNonText = 0;
+for (const issue of issues) {
+  // M5: only a string is accepted. v3 returns `description` as Atlassian Document Format
+  // JSON, and `String({...})` stringifies to the non-blank '[object Object]' — that would
+  // pass the blank check below and get recorded permanently into this append-only store.
   const description = issue.fields?.description;
-  const text = typeof description === 'string' ? description.trim() : '';
+  if (description != null && typeof description !== 'string') {
+    skippedNonText++;
+    continue;
+  }
+  const text = (description ?? '').trim();
   // audit_requirement rejects blank text anyway; skipping keeps the store honest.
   if (!text) {
     skipped++;
@@ -77,5 +101,6 @@ for (const issue of (await res.json()).issues ?? []) {
 }
 
 console.error(
-  `imported ${imported} requirement(s) into ${path}; skipped ${skipped} with no description`,
+  `imported ${imported} requirement(s) into ${path}; skipped ${skipped} with no description` +
+    (skippedNonText ? `; skipped ${skippedNonText} with a non-text description (expected a v2 string)` : ''),
 );
