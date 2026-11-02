@@ -1,4 +1,4 @@
-// Three views, hash-routed, no build step. Nodes are built with the DOM API rather than
+// Hash-routed views, no build step. Nodes are built with the DOM API rather than
 // innerHTML because everything rendered here is model output or requirement text.
 
 const TYPES = ['requirement', 'finding', 'answer', 'test_case', 'test_run', 'defect', 'verdict', 'audit', 'fixture'];
@@ -23,6 +23,11 @@ function h(tag, props = {}, ...kids) {
 }
 const get = (path) => fetch(path).then((r) => r.json());
 const ago = (iso) => new Date(iso).toLocaleString();
+const firstLine = (s) => (typeof s === 'string' ? s.split('\n')[0] : '');
+const FAILED = new Set(['failed', 'error']);
+/** One class per run, for list rows and chain cards: failed wins over flaky, so it stays red. */
+const runClass = (status, flaky) =>
+  FAILED.has(status) ? 'run-failed' : flaky ? 'run-flaky' : status === 'passed' ? 'run-passed' : status === 'skipped' ? 'run-skipped' : '';
 
 /** One line that tells you what an artifact is without opening it. */
 function summarise(a) {
@@ -32,6 +37,12 @@ function summarise(a) {
   if (a.type === 'verdict' && c.verdict) {
     const flag = c.override ? '⚠ OVERRIDDEN ' : '';
     return `${flag}${String(c.verdict).toUpperCase()} — ${c.reason ?? ''}`;
+  }
+  // A run leads with its status, so "FAILED — expected 1 email, got 0 (r1)" reads at a glance
+  // instead of a JSON dump.
+  if (a.type === 'test_run') {
+    const message = firstLine(c.message);
+    return `${String(c.status ?? 'unknown').toUpperCase()}${c.flaky ? ' (flaky)' : ''}${message ? ` — ${message}` : ''} (${c.runRef ?? a.sourceRef})`;
   }
   return c.text ?? c.quote ?? c.name ?? c.reason ?? c.verdict ?? c.note ?? JSON.stringify(c);
 }
@@ -282,6 +293,7 @@ async function chainView(id) {
           // An answer produced by AI is marked in the graph, not just in its detail panel:
           // an agent resolving its own audit finding should be visible at a glance.
           const aiAnswer = n.type === 'answer' && n.provenance.producer === 'ai';
+          const run = n.type === 'test_run' ? runClass(n.content?.status, n.content?.flaky === true) : '';
           const card = h(
             'a',
             {
@@ -289,7 +301,8 @@ async function chainView(id) {
                 'node' +
                 (n.id === chain.root.id ? ' root' : '') +
                 (unresolved ? ' unresolved' : '') +
-                (aiAnswer ? ' ai-answer' : ''),
+                (aiAnswer ? ' ai-answer' : '') +
+                (run ? ' ' + run : ''),
               href: `#/a/${n.id}`,
             },
             h('span', { className: 'id' }, n.sourceRef ?? n.id),
@@ -298,6 +311,8 @@ async function chainView(id) {
             // Colour alone (var(--ai), shared with the `verifies` edge) is not a safe way to
             // mark an agent resolving its own finding — this text flag is the actual signal.
             aiAnswer ? h('span', { className: 'flag' }, '● ai-answered') : null,
+            run === 'run-failed' ? h('span', { className: 'flag' }, '● failed') : null,
+            run === 'run-flaky' ? h('span', { className: 'flag flag-warn' }, '● flaky') : null,
           );
           cards.set(n.id, card);
           return card;
@@ -320,6 +335,8 @@ async function chainView(id) {
       ),
       h('span', { className: 'verdict-bad' }, '● finding nothing has resolved'),
       h('span', { className: 'producer-ai' }, '● ai-answered — an AI resolved its own finding'),
+      h('span', { className: 'verdict-bad' }, '● failed run'),
+      h('span', { className: 'badge-flaky' }, '● flaky run'),
     ),
   );
 
@@ -530,6 +547,53 @@ async function readinessView(changed) {
   );
 }
 
+// ---------------------------------------------------------------- runs view
+
+/** Every recorded test run, newest first: which test, which ticket, and did it fail. */
+async function runsView(show) {
+  const showing = show === 'failed' || show === 'flaky' ? show : 'all';
+  const filters = h(
+    'div',
+    { className: 'filters' },
+    ['all', 'failed', 'flaky'].map((f) =>
+      h('button', {
+        textContent: f,
+        ariaPressed: String(showing === f),
+        onclick: () => (location.hash = f === 'all' ? '#/runs' : `#/runs?show=${f}`),
+      }),
+    ),
+  );
+
+  const { rows: all } = await get('/api/runs');
+  const failed = all.filter((r) => FAILED.has(r.status));
+  const flaky = all.filter((r) => r.flaky);
+  crumbs.replaceChildren(`${all.length} run${all.length === 1 ? '' : 's'} · ${failed.length} failed · ${flaky.length} flaky`);
+  if (!all.length) {
+    return view.replaceChildren(filters, h('p', { className: 'empty' }, 'No test runs yet. Record some with qa-spine ingest-junit.'));
+  }
+
+  const rows = { all, failed, flaky }[showing];
+  view.replaceChildren(
+    filters,
+    h('table', {},
+      h('thead', {}, h('tr', {}, ['test', 'ticket', 'status', 'release', 'time', 'message'].map((c) => h('th', {}, c)))),
+      h('tbody', {}, rows.map((r) =>
+        h('tr', { className: runClass(r.status, r.flaky) },
+          h('td', {}, h('a', { href: `#/c/${r.runId}`, textContent: r.test })),
+          h('td', {}, r.tickets.length
+            ? r.tickets.flatMap((t, i) => [i ? ', ' : null, h('a', { href: `#/c/${t.requirementId}`, textContent: t.ref })])
+            : '—'),
+          // Colour is not the only signal: the status word and the flaky badge are text.
+          h('td', { className: 'status' }, r.status.toUpperCase(), r.flaky ? h('span', { className: 'badge-flaky' }, '⚑ flaky') : null),
+          h('td', {}, r.release, r.commit ? h('span', { className: 'dim' }, ` ${r.commit.slice(0, 7)}`) : null),
+          h('td', r.durationSec != null ? { title: `${r.durationSec}s` } : {}, ago(r.recordedAt)),
+          h('td', { title: r.message }, r.message.length > 120 ? r.message.slice(0, 119) + '…' : r.message),
+        ),
+      )),
+    ),
+  );
+}
+
 function route() {
   const query = new URLSearchParams(location.hash.split('?')[1] ?? '');
   const [, path, id] = location.hash.match(/^#\/(a|c)\/(.+)$/) ?? [];
@@ -537,6 +601,7 @@ function route() {
   if (path === 'c') return chainView(decodeURIComponent(id));
   if (location.hash.startsWith('#/audit')) return auditView(query.get('show'));
   if (location.hash.startsWith('#/readiness')) return readinessView(query.get('changed'));
+  if (location.hash.startsWith('#/runs')) return runsView(query.get('show'));
   return listView(query.get('type'));
 }
 
