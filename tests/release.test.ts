@@ -350,11 +350,11 @@ test('recordVerdict rejects an override supplied with a hold verdict', () => {
 test('recordVerdict allows a ship when no signal is live', () => {
   const store = new TraceStore(':memory:');
   const { req, open, testCase } = seedRelease(store);
-  // A rerun from a tool: a pass typed in by hand would not clear the seed's failure.
+  // Named: a pass typed in by hand clears a failure only with a person vouching for it.
   store.record({
     type: 'test_run',
     content: { status: 'passed' },
-    provenance: { producer: 'tool', tool: 'qa-spine ingest-junit' },
+    provenance: { ...human, approvedBy: 'a.rivera' },
     links: [{ to: testCase.id, relation: 'verifies' }],
   });
   store.record({

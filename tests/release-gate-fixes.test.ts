@@ -181,7 +181,7 @@ test('bug 2: recordVerdict refuses a ship over a held hand pass, and an approved
   const { tc, fail } = seedToolFailure(store);
   run(store, tc.id, { status: 'passed' });
   const base = { releaseRef: 'r1', verdict: 'ship' as const, reason: 'Checked by hand.', cites: [], changed: ['SCRUM-22'] };
-  assert.throws(() => recordVerdict(store, { ...base, provenance: human }), /hand-recorded, not from a tool run/);
+  assert.throws(() => recordVerdict(store, { ...base, provenance: human }), /typed in by hand with no one named in approvedBy/);
   assert.throws(
     () => recordVerdict(store, { ...base, override: { reason: 'Verified by hand on staging.' }, provenance: human }),
     /approvedBy/,
@@ -238,7 +238,8 @@ test('repro B via the CLI: a hand-recorded pass holds; a named override with a r
   withDb((db) => {
     const req = rec(db, { type: 'requirement', sourceRef: 'SCRUM-22', content: { text: 'Coupon applies 10%' }, provenance: human });
     const tc = rec(db, { type: 'test_case', sourceRef: 'features/coupon.feature', content: {}, provenance: human, links: [{ to: req, relation: 'covers' }] });
-    rec(db, { type: 'test_run', sourceRef: 'ci-run', content: { status: 'failed' }, provenance: { producer: 'tool', tool: 'qa-spine ingest-junit' }, links: [{ to: tc, relation: 'verifies' }] });
+    // A CI step, not the ingest: raw `record` refuses a qa-spine tool name. Any run can block.
+    rec(db, { type: 'test_run', sourceRef: 'ci-run', content: { status: 'failed' }, provenance: { producer: 'tool', tool: 'jenkins' }, links: [{ to: tc, relation: 'verifies' }] });
     assert.equal(JSON.parse(cli(['gate', '--changed', 'SCRUM-22', '--json'], db).out).shippable, false);
     rec(db, { type: 'test_run', sourceRef: 'trust-me', content: { status: 'passed' }, provenance: human, links: [{ to: tc, relation: 'verifies' }] });
 
@@ -249,7 +250,7 @@ test('repro B via the CLI: a hand-recorded pass holds; a named override with a r
     assert.equal(r.failingTests[0].heldBecause, HAND_RECORDED_PASS_HELD);
 
     const summary = cli(['gate', '--changed', 'SCRUM-22'], db).out;
-    assert.match(summary, /Not cleared: latest pass was hand-recorded, not from a tool run/);
+    assert.match(summary, /Not cleared: latest pass was typed in by hand with no one named in approvedBy/);
     assert.match(summary, /--approved-by/);
 
     const approved = cli(['gate', '--changed', 'SCRUM-22', '--override-reason', 'Verified by hand on staging.', '--approved-by', 'a.rivera', '--json'], db);
