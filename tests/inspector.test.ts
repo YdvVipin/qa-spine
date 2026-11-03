@@ -5,6 +5,7 @@ import { TraceStore } from '../src/trace/store.ts';
 import { createInspector, startInspector } from '../src/inspector/server.ts';
 import { reviewExport } from '../src/server.ts';
 import { ingestJunit } from '../src/junit.ts';
+import { recordRetraction } from '../src/retract.ts';
 
 const ai = { producer: 'ai' as const, model: 'claude-opus-5', promptVersion: 'sha256:abc' };
 
@@ -188,6 +189,16 @@ test('the runs endpoint marks a run flaky the same way Readiness does', async (t
   ({ rows } = await (await api('/api/runs')).json());
   assert.equal(rows[0].status, 'passed');
   assert.equal(rows[0].flaky, true);
+});
+
+test('the runs endpoint leaves out a withdrawn run, as the artifact list does', async (t) => {
+  const store = new TraceStore(':memory:');
+  seed(store);
+  ingestJunit(store, { reports: [{ file: 'a.xml', xml: junit(['PROJ-7 refund emails', 'wrong env']) }], runRef: 'r1' });
+  const [run] = store.list('test_run');
+  recordRetraction(store, { id: run.id, by: 'Vipin', reason: 'ran against staging by mistake' });
+  const api = await serve(store, t);
+  assert.deepEqual(await (await api('/api/runs')).json(), { rows: [] });
 });
 
 test('an unkeyed test has no tickets, and an empty store has no runs', async (t) => {

@@ -38,6 +38,18 @@ export type RiskSignal =
       detail: FailingTest;
     };
 
+/** Something on a changed area a person withdrew, with their name and reason. */
+export type Retracted = {
+  id: string;
+  type: string;
+  /** What a reader recognises: the ticket key, or the test's name. */
+  name: string;
+  retractionId: string;
+  by: string;
+  reason: string;
+  at: string;
+};
+
 export type FailingTest = {
   testRunId: string;
   testCaseId: string;
@@ -59,44 +71,36 @@ export type FailingTest = {
 
 const BLOCKING_STATUS = new Set(['failed', 'error']);
 
-/** Why a hand-recorded pass leaves a failing test blocking. Shown in the gate and the brief. */
-export const HAND_RECORDED_PASS_HELD = 'latest pass was hand-recorded, not from a tool run';
+export const INGEST_TOOL = 'qa-spine ingest-junit';
+
+/** Recorded by qa-spine's own ingest from a test report, not typed in through a raw write. */
+const ingested = (run: Artifact) => run.provenance.producer === 'tool' && run.provenance.tool === INGEST_TOOL;
 
 /**
- * A non-failing result a person typed in (producer `human`). It does not clear an earlier
- * failure on its own: anyone able to run `qa-spine record` could otherwise turn the gate
- * green with `{"status":"passed"}`. Tool runs (`ingest-junit`, a CI step) count as before.
- * A person who has checked by hand that the failure is not real says so where it is
- * visible and named: the gate's `--override-reason` with `--approved-by`, or an override
- * on `release_submit`, which records who accepted the risk on the verdict.
+ * The run that decides a test's state: the newest one allowed to. Any run can block, whoever
+ * recorded it. Clearing asks more: a run that did not fail, typed in through trace_record or
+ * CLI `record`, counts only when it names a person in `provenance.approvedBy`. Otherwise an
+ * agent could turn the gate green by recording "passed" after a real failure. The raw paths
+ * cannot claim to be the ingest (assertRawRecordAllowed reserves the tool name).
  *
- * ponytail: `ai`-produced runs are not covered by this rule and count like tool runs.
+ * ponytail: the name is self-asserted, like an override's. The gate prints it beside the test,
+ * so a made-up one is at least visible. Upgrade: refuse unnamed runs outright, once QAAE (which
+ * records runs through `record`) sends a name.
  */
-export const isHandRecordedPass = (run: Artifact): boolean =>
-  run.provenance.producer === 'human' && !BLOCKING_STATUS.has(String(run.content.status));
-
-/**
- * The run that decides a test case, newest first as `linkedFrom` returns them (created_at,
- * then insertion order). The latest run decides, except that a hand-recorded pass cannot
- * clear an earlier failure: then the newest run that is not a hand-recorded pass decides,
- * and the hand-recorded one is returned as `heldPass` so the caller can say why.
- */
-export function decidingRun(runs: Artifact[]): { run: Artifact | undefined; heldPass: Artifact | null } {
-  const latest = runs[0];
-  if (!latest || !isHandRecordedPass(latest)) return { run: latest, heldPass: null };
-  const counted = runs.find((r) => !isHandRecordedPass(r));
-  if (counted && BLOCKING_STATUS.has(String(counted.content.status))) return { run: counted, heldPass: latest };
-  return { run: latest, heldPass: null };
+export function decidingRun(runs: Artifact[]): Artifact | undefined {
+  return runs.find(
+    (r) => BLOCKING_STATUS.has(String(r.content.status)) || ingested(r) || !!r.provenance.approvedBy?.trim(),
+  );
 }
 
-/** Whether a test case's runs leave it blocking, by the same rule the gate uses. */
-const isFailing = (runs: Artifact[]): boolean => {
-  const { run } = decidingRun(runs);
-  return !!run && BLOCKING_STATUS.has(String(run.content.status));
-};
+/** Why a hand-recorded pass leaves a failing test blocking. Shown in the gate and the brief. */
+export const HAND_RECORDED_PASS_HELD = 'latest pass was typed in by hand with no one named in approvedBy';
+
+/** A run that did not fail and is not allowed to clear a failure: exactly what decidingRun skips. */
+export const isHandRecordedPass = (run: Artifact): boolean => decidingRun([run]) === undefined;
 
 /** Flakiness is judged on the runs that count: a hand-recorded pass cannot make a failure look flaky either. */
-const flakyOn = (runs: Artifact[]): boolean => isFlaky(runs.filter((r) => !isHandRecordedPass(r)));
+export const flakyOn = (runs: Artifact[]): boolean => isFlaky(runs.filter((r) => !isHandRecordedPass(r)));
 
 /** Flaky: ingest saw it pass and fail in one report, or two runs on one commit disagree. */
 export function isFlaky(runs: Artifact[]): boolean {
@@ -135,15 +139,16 @@ function openFindingsOn(store: TraceStore, reqId: string, requireHuman: boolean)
   return store.linkedFrom(reqId, 'derived_from', 'finding').flatMap((f): { f: Artifact; awaiting: string | null }[] => {
     const resolvers = store
       .edgesTo(f.id)
-      .filter((e) => e.relation === 'supersedes')
+      .filter((e) => e.relation === 'supersedes' && !store.isRetracted(e.fromArtifactId))
       .flatMap((e) => store.get(e.fromArtifactId) ?? []);
     if (!resolvers.length) return [{ f, awaiting: null }];
     return resolvers.some((r) => isHumanOrApproved(store, r)) ? [] : [{ f, awaiting: resolvers[0].id }];
   });
 }
 
-/** Not replaced by a newer version of itself. */
-const isCurrent = (store: TraceStore, req: Artifact) => !store.linkedFrom(req.id, 'supersedes', 'requirement').length;
+/** Not retracted, and not replaced by a newer version of itself that is in force. */
+const isCurrent = (store: TraceStore, req: Artifact) =>
+  !store.isRetracted(req.id) && !store.linkedFrom(req.id, 'supersedes', 'requirement').length;
 
 /** The requirement versions this one replaced. */
 const previousVersions = (store: TraceStore, req: Artifact) =>
@@ -152,9 +157,11 @@ const previousVersions = (store: TraceStore, req: Artifact) =>
     .filter((e) => e.relation === 'supersedes' && store.get(e.toArtifactId)?.type === 'requirement')
     .map((e) => e.toArtifactId);
 
-/** Every version of a requirement: all requirements sharing its sourceRef, or just itself. */
+/** Every version of a requirement not retracted: all requirements sharing its sourceRef, or just itself. */
 const allVersions = (store: TraceStore, req: Artifact) =>
-  req.sourceRef ? store.bySourceRef([req.sourceRef]).filter((a) => a.type === 'requirement') : [req];
+  req.sourceRef
+    ? store.bySourceRef([req.sourceRef]).filter((a) => a.type === 'requirement' && !store.isRetracted(a.id))
+    : [req];
 
 /** Edited since it was last audited: replaced an earlier version, and no finding or audit since. */
 const isSuspect = (store: TraceStore, req: Artifact) =>
@@ -241,7 +248,7 @@ export function requirementStatus(
       const tests = coveringTests(store, req);
       const runs = tests.map((tc) => store.linkedFrom(tc.id, 'verifies', 'test_run'));
       const open = versions.reduce((n, v) => n + openFindingsOn(store, v.id, requireHuman).length, 0);
-      const failing = runs.filter(isFailing).length;
+      const failing = runs.filter((r) => BLOCKING_STATUS.has(String(decidingRun(r)?.content.status))).length;
       const suspect = isSuspect(store, req);
       const untested = tests.length === 0;
       const status: RequirementStatus['status'] = open || failing ? 'blocked' : suspect || untested ? 'warning' : 'clear';
@@ -271,8 +278,8 @@ export function requirementStatus(
  * so deriving it through edges would let one changed file mark every requirement in the store
  * as changed, and every release would block on everything.
  *
- * A finding retires the moment anything supersedes it — `openFindings` only checks that a
- * `supersedes` edge exists. The raw write paths refuse to create one onto a finding, and refuse
+ * A finding retires the moment anything not retracted supersedes it — `openFindings` checks
+ * for such a `supersedes` edge. The raw write paths refuse to create one onto a finding, and refuse
  * `verdict` outright (`assertRawRecordAllowed` in src/trace/store.ts), so only `audit_answer`
  * retires a question and only `release_submit` records a decision. Code importing the store
  * directly is not guarded; `qa-spine verify` is what catches a row that did not come through here.
@@ -284,7 +291,10 @@ export function assessReleaseRisk(
   const changed = [...new Set(input.changed.map((r) => r.trim()).filter((r) => r))];
   if (!changed.length) throw new Error('changed must not be empty');
 
-  const matched = store.bySourceRef(changed);
+  // A retracted artifact matches nothing: a ref covered only by a withdrawn requirement is
+  // code that moved with nothing in force covering it. The withdrawal is reported below.
+  const everMatched = store.bySourceRef(changed);
+  const matched = everMatched.filter((a) => !store.isRetracted(a.id));
   const matchedRefs = new Set(matched.map((a) => a.sourceRef));
   const unmatched = changed.filter((ref) => !matchedRefs.has(ref));
   const requirements = matched.filter((a) => a.type === 'requirement');
@@ -326,18 +336,32 @@ export function assessReleaseRisk(
 
   // The latest run decides: a later pass clears an earlier failure without superseding it.
   // Two exceptions. A test case a heal replaced no longer decides anything; its current
-  // version does (`currentTestCases`). And a pass a person recorded by hand does not clear an
-  // earlier failure on its own (`decidingRun`); a named override does.
+  // version does (`currentTestCases`). And every covering test counts, whoever recorded it,
+  // not only ingested ones — but a pass typed in by hand clears only with a name on it
+  // (decidingRun), and is reported in `handEntered`; an unnamed one is `heldPass` below.
   const flaky: { testCaseId: string; requirementId: string; name: string }[] = [];
+  const handEntered: { testCaseId: string; testRunId: string; requirementId: string; name: string; status: string; by: string }[] = [];
   const testSignals: RiskSignal[] = requirements.flatMap((req) =>
     currentOf(store, store.linkedFrom(req.id, 'covers', 'test_case')).flatMap((tc) => {
       const runs = store.linkedFrom(tc.id, 'verifies', 'test_run');
-      const { run: latest, heldPass } = decidingRun(runs);
+      const latest = decidingRun(runs);
+      // Anything newer than the deciding run is an unnamed hand-entered pass it skipped.
+      const heldPass = latest && runs[0] !== latest ? runs[0] : null;
       if (!latest) return [];
       const name = String(tc.content.name ?? tc.sourceRef ?? tc.id);
       const unreliable = flakyOn(runs);
       if (unreliable) flaky.push({ testCaseId: tc.id, requirementId: req.id, name });
       const status = String(latest.content.status);
+      if (!BLOCKING_STATUS.has(status) && !ingested(latest)) {
+        handEntered.push({
+          testCaseId: tc.id,
+          testRunId: latest.id,
+          requirementId: req.id,
+          name,
+          status,
+          by: String(latest.provenance.approvedBy),
+        });
+      }
       if (!BLOCKING_STATUS.has(status)) return [];
       return [
         {
@@ -359,6 +383,35 @@ export function assessReleaseRisk(
     }),
   );
   const signals = [...findingSignals, ...testSignals];
+
+  // Withdrawn on these areas: a requirement, a covering test, or a failed run that would count
+  // here if nobody had retracted it. Retracting is how a blocker can legitimately leave the gate,
+  // so it is never silent — the gate prints these and the verdict records them.
+  const retracted = new Map<string, Retracted>();
+  const noteRetracted = (a: Artifact, name: string) => {
+    const r = store.retractionOf(a.id);
+    if (!r || retracted.has(a.id)) return;
+    retracted.set(a.id, {
+      id: a.id,
+      type: a.type,
+      name,
+      retractionId: r.id,
+      by: String(r.content.retractedBy ?? ''),
+      reason: String(r.content.reason ?? ''),
+      at: r.createdAt,
+    });
+  };
+  for (const req of everMatched) if (req.type === 'requirement') noteRetracted(req, req.sourceRef ?? req.id);
+  for (const req of requirements) {
+    for (const tc of store.linkedFrom(req.id, 'covers', 'test_case', { includeRetracted: true })) {
+      const name = String(tc.content.name ?? tc.sourceRef ?? tc.id);
+      noteRetracted(tc, name);
+      if (store.isRetracted(tc.id)) continue;
+      for (const run of store.linkedFrom(tc.id, 'verifies', 'test_run', { includeRetracted: true })) {
+        if (BLOCKING_STATUS.has(String(run.content.status))) noteRetracted(run, name);
+      }
+    }
+  }
 
   // Suspect: the current version of a requirement that replaced an earlier one and has not
   // been audited since — its tests and answers were written against wording that changed.
@@ -392,6 +445,8 @@ export function assessReleaseRisk(
     matched: { requirements: requirements.map((r) => r.id), unmatched },
     signals,
     flaky,
+    handEntered,
+    retracted: [...retracted.values()],
     suspect,
     untested,
     context: { nodes: [...nodes.values()], edges: [...edges.values()] },
@@ -506,7 +561,7 @@ export function recordVerdict(
     throw new Error('override is only meaningful with a ship verdict');
   }
 
-  const { release, signals, matched, suspect, untested } = assessReleaseRisk(store, {
+  const { release, signals, matched, suspect, untested, retracted } = assessReleaseRisk(store, {
     changed: input.changed,
     requireHumanAnswers: input.requireHumanAnswers,
   });
@@ -589,6 +644,10 @@ export function recordVerdict(
       // Not refused — splitting a release into two decisions is legitimate — but recorded,
       // so a quietly narrowed list is visible instead of looking like a clean release.
       ...(dropped.length ? { droppedFromAssessment: dropped } : {}),
+      // What a person had withdrawn from these areas at decision time, with their name and
+      // reason, copied rather than referenced: undoing a retraction later must not change
+      // what this decision says it was based on.
+      ...(retracted.length ? { retracted } : {}),
       ...(assumptions.length ? { assumptions } : {}),
       // Requirements edited since they were last audited, as the refs a reader recognises.
       ...(suspect.length ? { suspect: [...new Set(suspect.map((s) => s.sourceRef ?? s.requirementId))] } : {}),

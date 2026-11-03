@@ -249,11 +249,14 @@ export function recordAnswer(
   // `CREATE UNIQUE INDEX ... ON edges(to_id) WHERE relation = 'supersedes'` — deliberately
   // not added here, since it would hard-fail on any existing store that already holds two
   // `supersedes` edges on one finding, and this project has no migration story.
-  const resolver = store.edgesTo(input.findingId).find((e) => e.relation === 'supersedes');
+  // A retracted answer no longer resolves anything: its question is open again and answerable.
+  const resolver = store
+    .edgesTo(input.findingId)
+    .find((e) => e.relation === 'supersedes' && !store.isRetracted(e.fromArtifactId));
   if (resolver) {
     throw new Error(
       `finding ${input.findingId} is already resolved by ${resolver.fromArtifactId} — ` +
-        'supersede that instead of adding another answer',
+        'if that answer was a mistake, retract it first (qa-spine retract)',
     );
   }
 

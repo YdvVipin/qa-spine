@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 import type { TraceStore } from '../trace/store.ts';
 import { ArtifactType } from '../trace/schema.ts';
 import { openQuestions, recordAnswer } from '../audit.ts';
-import { isFlaky, requirementStatus } from '../release.ts';
+import { flakyOn, requirementStatus } from '../release.ts';
+import { recordRetraction } from '../retract.ts';
+import type { Artifact } from '../trace/schema.ts';
 
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), 'ui');
 const MIME: Record<string, string> = {
@@ -14,11 +16,18 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
 };
 
+/** Who withdrew an artifact and why, or null while it is in force. */
+function withdrawal(store: TraceStore, a: Artifact) {
+  const r = store.retractionOf(a.id);
+  return r ? { retractionId: r.id, by: r.content.retractedBy ?? null, reason: r.content.reason ?? null, at: r.createdAt } : null;
+}
+
 /**
- * Read-only lens on the trace store, with two human-authored writes: a thumbs up/down on
- * an AI artifact, and a human's answer to an open audit question. It renders the store; it
- * never triggers an agent or edits an artifact — both writes only ever append a new one.
- * Bound to loopback only — there is no auth because there is no remote access.
+ * Read-only lens on the trace store, with three human-authored writes: a thumbs up/down on
+ * an AI artifact, a human's answer to an open audit question, and a retraction. It renders the
+ * store; it never triggers an agent or edits an artifact — every write only appends a new one.
+ * Bound to loopback only — there is no auth because there is no remote access, which also
+ * means the name on a retraction is whatever the person typed.
  */
 export function createInspector(store: TraceStore): Server {
   return createHttpServer(async (req, res) => {
@@ -33,13 +42,43 @@ export function createInspector(store: TraceStore): Server {
         const raw = url.searchParams.get('type');
         const type = raw ? ArtifactType.safeParse(raw) : undefined;
         if (type && !type.success) return send(400, { error: `unknown artifact type: ${raw}` });
-        return send(200, { artifacts: store.list(type?.data, 500) });
+        // Withdrawn artifacts are left out unless asked for, and marked when they are.
+        const showRetracted = url.searchParams.get('retracted') === '1';
+        const artifacts = store
+          .list(type?.data, 500)
+          .map((a) => ({ ...a, retracted: withdrawal(store, a) }))
+          .filter((a) => showRetracted || !a.retracted);
+        return send(200, { artifacts });
       }
 
-      // Powers both the detail and chain views: one artifact plus everything around it.
+      // Powers both the detail and chain views: one artifact plus everything around it. The
+      // chain is history, so withdrawn nodes stay in it, each marked with who withdrew it.
       if (req.method === 'GET' && url.pathname.startsWith('/api/chain/')) {
         const chain = store.chain(decodeURIComponent(url.pathname.slice('/api/chain/'.length)));
-        return chain ? send(200, chain) : send(404, { error: 'no such artifact' });
+        if (!chain) return send(404, { error: 'no such artifact' });
+        const retracted = Object.fromEntries(
+          chain.nodes.flatMap((n) => {
+            const w = withdrawal(store, n);
+            return w ? [[n.id, w]] : [];
+          }),
+        );
+        return send(200, { ...chain, retracted });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/retract') {
+        try {
+          const body = await jsonBody(req);
+          return send(
+            200,
+            recordRetraction(store, {
+              id: String(body.artifactId ?? ''),
+              by: String(body.by ?? ''),
+              reason: String(body.reason ?? ''),
+            }),
+          );
+        } catch (err) {
+          return send(400, { error: err instanceof Error ? err.message : String(err) });
+        }
       }
 
       if (req.method === 'POST' && url.pathname === '/api/review') {
@@ -69,11 +108,12 @@ export function createInspector(store: TraceStore): Server {
       }
 
       // Test runs, newest first, each joined to its test and tickets here so the runs view
-      // makes one request. Flaky uses Readiness's isFlaky, so the two views always agree.
+      // makes one request. Flaky uses Readiness's flakyOn, so the two views always agree.
       if (req.method === 'GET' && url.pathname === '/api/runs') {
         const raw = Number(url.searchParams.get('limit'));
         const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 500) : 200; // 500 = the /api/artifacts cap
-        const rows = store.list('test_run', limit).map((run) => {
+        // A withdrawn run is left out, as in /api/artifacts; isFlaky's linkedFrom skips them too.
+        const rows = store.list('test_run', limit).filter((run) => !store.isRetracted(run.id)).map((run) => {
           const tcId = store.edgesFrom(run.id).find((e) => e.relation === 'verifies')?.toArtifactId;
           const tc = tcId ? store.get(tcId) : undefined;
           const reqs = tc
@@ -87,7 +127,7 @@ export function createInspector(store: TraceStore): Server {
             // A test can cover several versions of one requirement: one ticket each.
             tickets: [...new Map(reqs.map((r) => [r.sourceRef, { ref: r.sourceRef, requirementId: r.id }])).values()],
             status: String(c.status ?? 'unknown'),
-            flaky: c.flaky === true || (tc ? isFlaky(store.linkedFrom(tc.id, 'verifies', 'test_run')) : false),
+            flaky: c.flaky === true || (tc ? flakyOn(store.linkedFrom(tc.id, 'verifies', 'test_run')) : false),
             release: String(c.runRef ?? run.sourceRef ?? '—'),
             commit: typeof c.commit === 'string' ? c.commit : null,
             recordedAt: run.createdAt,

@@ -12,6 +12,7 @@
 import { basename } from 'node:path';
 import type { TraceStore } from './trace/store.ts';
 import { DEFAULT_TICKET_PATTERN } from './gate.ts';
+import { INGEST_TOOL } from './release.ts';
 
 type XmlElement = { name: string; attrs: Record<string, string>; children: XmlElement[]; text: string };
 
@@ -153,7 +154,7 @@ export function parseJunit(xml: string, ticketPattern: string): JunitCase[] {
     });
 }
 
-export const INGEST_TOOL = 'qa-spine ingest-junit';
+export { INGEST_TOOL };
 
 export type IngestResult = {
   runs: { testCaseId: string; testRunId: string; name: string; status: TestStatus; flaky: boolean }[];
@@ -221,8 +222,9 @@ export function ingestJunit(
 
   const runs = store.transaction(() =>
     [...byIdentity].map(([identity, c]) => {
+      // A retracted case is not reused: its runs would land somewhere every view ignores.
       const testCase =
-        store.bySourceRef([identity]).find((a) => a.type === 'test_case') ??
+        store.bySourceRef([identity]).find((a) => a.type === 'test_case' && !store.isRetracted(a.id)) ??
         store.record({
           type: 'test_case',
           sourceRef: identity,
@@ -233,7 +235,7 @@ export function ingestJunit(
       if (!c.keys.length) unkeyed++;
       const linked = new Set(store.edgesFrom(testCase.id).filter((e) => e.relation === 'covers').map((e) => e.toArtifactId));
       for (const key of c.keys) {
-        const requirements = store.bySourceRef([key]).filter((a) => a.type === 'requirement');
+        const requirements = store.bySourceRef([key]).filter((a) => a.type === 'requirement' && !store.isRetracted(a.id));
         if (!requirements.length) uncovered.add(key);
         for (const req of requirements) {
           if (!linked.has(req.id)) store.link(testCase.id, req.id, 'covers');
