@@ -22,10 +22,15 @@ const ai = { producer: 'ai' as const, model: 'claude-opus-5', promptVersion: 'am
 const ingest = { producer: 'tool' as const, tool: INGEST_TOOL };
 const by = 'a.rivera';
 
-/** A requirement with one test whose only run failed — the smallest store with a blocker. */
+/**
+ * A requirement with one test that passed, then failed — the smallest store with a blocker.
+ * The earlier pass is what decides once the failure is withdrawn: retracting a test's only run
+ * leaves it never run, which is UNKNOWN (release-truth.test.ts), not a pass.
+ */
 function seed(store: TraceStore) {
   const req = store.record({ type: 'requirement', sourceRef: 'PROJ-42', content: { text: 'Refunds are processed quickly.' }, provenance: human });
   const tc = store.record({ type: 'test_case', content: { name: 'refund completes' }, provenance: ingest, links: [{ to: req.id, relation: 'covers' }] });
+  store.record({ type: 'test_run', content: { status: 'passed' }, provenance: ingest, links: [{ to: tc.id, relation: 'verifies' }] });
   const run = store.record({
     type: 'test_run',
     content: { status: 'failed', message: 'timed out' },

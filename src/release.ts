@@ -1,5 +1,5 @@
 import type { TraceStore } from './trace/store.ts';
-import type { Artifact, Edge, Provenance } from './trace/schema.ts';
+import { RUN_STATUSES, type Artifact, type Edge, type Provenance } from './trace/schema.ts';
 
 const INSTRUCTIONS =
   'Write a one-page release brief, then record it with release_submit. Cite an artifact id ' +
@@ -77,27 +77,107 @@ export const INGEST_TOOL = 'qa-spine ingest-junit';
 const ingested = (run: Artifact) => run.provenance.producer === 'tool' && run.provenance.tool === INGEST_TOOL;
 
 /**
- * The run that decides a test's state: the newest one allowed to. Any run can block, whoever
- * recorded it. Clearing asks more: a run that did not fail, typed in through trace_record or
- * CLI `record`, counts only when it names a person in `provenance.approvedBy`. Otherwise an
- * agent could turn the gate green by recording "passed" after a real failure. The raw paths
- * cannot claim to be the ingest (assertRawRecordAllowed reserves the tool name).
+ * Whether a run may decide a test's state at all. Any run can block, whoever recorded it.
+ * Clearing asks more: a run that did not fail, typed in through trace_record or CLI `record`,
+ * counts only when it names a person in `provenance.approvedBy`. Otherwise an agent could turn
+ * the gate green by recording "passed" after a real failure. The raw paths cannot claim to be
+ * the ingest (assertRawRecordAllowed reserves the tool name).
  *
  * ponytail: the name is self-asserted, like an override's. The gate prints it beside the test,
- * so a made-up one is at least visible. Upgrade: refuse unnamed runs outright, once QAAE (which
- * records runs through `record`) sends a name.
+ * so a made-up one is at least visible. Upgrade: authenticated identity (team mode).
  */
-export function decidingRun(runs: Artifact[]): Artifact | undefined {
-  return runs.find(
-    (r) => BLOCKING_STATUS.has(String(r.content.status)) || ingested(r) || !!r.provenance.approvedBy?.trim(),
-  );
-}
+const counts = (r: Artifact) =>
+  BLOCKING_STATUS.has(String(r.content.status)) || ingested(r) || !!r.provenance.approvedBy?.trim();
 
 /** Why a hand-recorded pass leaves a failing test blocking. Shown in the gate and the brief. */
 export const HAND_RECORDED_PASS_HELD = 'latest pass was typed in by hand with no one named in approvedBy';
 
-/** A run that did not fail and is not allowed to clear a failure: exactly what decidingRun skips. */
-export const isHandRecordedPass = (run: Artifact): boolean => decidingRun([run]) === undefined;
+/** A run that did not fail and is not allowed to clear a failure. */
+export const isHandRecordedPass = (run: Artifact): boolean => !counts(run);
+
+/** The build a decision is about. A field left out matches any run; one given matches only runs that carry it. */
+export type Scope = { commit?: string; environment?: string };
+
+const inScope = (r: Artifact, scope: Scope) =>
+  (!scope.commit || r.content.commit === scope.commit) && (!scope.environment || r.content.environment === scope.environment);
+
+/**
+ * What a covering test's runs show, newest first. `passed` and `failing` are evidence; the
+ * other three are its absence: `not_run` (no run that counts, for this build), `skipped` (the
+ * newest run neither passed nor failed) and `invalid` (a status this version cannot read,
+ * written before statuses were checked). Only a pass clears a failure: a skip after one shows
+ * nothing was fixed, so the failure still decides.
+ */
+export type TestState =
+  | { state: 'passed' | 'not_run' | 'skipped' | 'invalid'; run?: Artifact }
+  | { state: 'failing'; run: Artifact; heldBy?: Artifact };
+
+export function testState(runs: Artifact[], scope: Scope = {}): TestState {
+  const eligible = runs.filter((r) => inScope(r, scope));
+  const counted = eligible.filter(counts);
+  const head = counted[0];
+  // Nothing counts. The newest result that does not (an unnamed pass) is kept so the gate can say why.
+  if (!head) return { state: 'not_run', run: eligible[0] };
+  const status = String(head.content.status);
+  const failure = BLOCKING_STATUS.has(status)
+    ? head
+    : status === 'passed'
+      ? undefined
+      : counted.find((r) => r.content.status === 'passed' || BLOCKING_STATUS.has(String(r.content.status)));
+  if (failure && BLOCKING_STATUS.has(String(failure.content.status))) {
+    // Something newer than the failure that did not clear it: a hand-typed pass, or a skip.
+    return eligible[0] === failure ? { state: 'failing', run: failure } : { state: 'failing', run: failure, heldBy: eligible[0] };
+  }
+  if (status === 'passed') return { state: 'passed', run: head };
+  return { state: (RUN_STATUSES as readonly string[]).includes(status) ? 'skipped' : 'invalid', run: head };
+}
+
+/** Why a failure still stands under a newer run: shown in the gate, recorded on the verdict. */
+const heldBecause = (run: Artifact) =>
+  isHandRecordedPass(run)
+    ? HAND_RECORDED_PASS_HELD
+    : `latest run was ${String(run.content.status)}, which does not show the failure was fixed`;
+
+/**
+ * SHIP: the evidence shows it. HOLD: a known blocker — an open question or a failing test.
+ * UNKNOWN: evidence is missing, so nobody can say. OVERRIDDEN: a named person accepted the
+ * known blockers. An override accepts what is known to be wrong; it cannot vouch for what was
+ * never checked, so UNKNOWN reasons survive it.
+ */
+export type Decision = 'SHIP' | 'HOLD' | 'UNKNOWN' | 'OVERRIDDEN';
+
+/** In this order everywhere they are listed: the known blockers first. */
+export const REASONS = [
+  'UNANSWERED_FINDING',
+  'FAILED_TEST',
+  'SCOPE_UNRESOLVED',
+  'NO_TEST',
+  'NO_REQUIRED_RUN',
+  'SKIPPED_REQUIRED_TEST',
+  'INVALID_STATUS',
+  'STALE_AUDIT',
+] as const;
+export type ReasonCode = (typeof REASONS)[number];
+
+const KNOWN_BLOCKERS = new Set<ReasonCode>(['UNANSWERED_FINDING', 'FAILED_TEST']);
+
+/** The one place a decision is made. Every surface calls this with the reasons it was given. */
+export function decide(reasons: readonly ReasonCode[], overridden = false): Decision {
+  const known = reasons.some((r) => KNOWN_BLOCKERS.has(r));
+  if (known && !overridden) return 'HOLD';
+  if (reasons.some((r) => !KNOWN_BLOCKERS.has(r))) return 'UNKNOWN';
+  return known ? 'OVERRIDDEN' : 'SHIP';
+}
+
+/** A covering test with no result that shows whether it works, for the build being assessed. */
+export type IncompleteTest = {
+  testCaseId: string;
+  requirementId: string;
+  name: string;
+  state: 'not_run' | 'skipped' | 'invalid';
+  testRunId: string | null;
+  status: string | null;
+};
 
 /** Flakiness is judged on the runs that count: a hand-recorded pass cannot make a failure look flaky either. */
 export const flakyOn = (runs: Artifact[]): boolean => isFlaky(runs.filter((r) => !isHandRecordedPass(r)));
@@ -213,12 +293,14 @@ export type RequirementStatus = {
   requirementId: string;
   sourceRef: string | null;
   text: string;
-  status: 'blocked' | 'warning' | 'clear';
+  status: 'blocked' | 'unknown' | 'warning' | 'clear';
   open: number;
   answered: number;
   assumptions: number;
   tests: number;
   failing: number;
+  /** Covering tests with no run showing whether they work: never run, skipped, or unreadable. */
+  incomplete: number;
   flaky: number;
   suspect: boolean;
   untested: boolean;
@@ -227,8 +309,9 @@ export type RequirementStatus = {
 /**
  * One row per current requirement — every one in the store, or those among `changed` — with
  * what the gate would say about it. Worst first: blocked (an open question or a failing
- * test), then warning (suspect or untested), then clear. The Inspector's readiness view and
- * the exports are both this list; neither decides anything the gate does not.
+ * test), then unknown (no tests, or tests with no result that counts), then warning (edited
+ * since its audit), then clear. The Inspector's readiness view and the exports are both this
+ * list; neither decides anything the gate does not.
  */
 export function requirementStatus(
   store: TraceStore,
@@ -239,7 +322,7 @@ export function requirementStatus(
   const candidates = changed
     ? store.bySourceRef(changed).filter((a) => a.type === 'requirement')
     : store.list('requirement', 1e9);
-  const rank = { blocked: 0, warning: 1, clear: 2 };
+  const rank = { blocked: 0, unknown: 1, warning: 2, clear: 3 };
   return candidates
     .filter((req) => isCurrent(store, req))
     .map((req) => {
@@ -247,11 +330,14 @@ export function requirementStatus(
       const answers = versions.flatMap((v) => store.linkedFrom(v.id, 'derived_from', 'answer'));
       const tests = coveringTests(store, req);
       const runs = tests.map((tc) => store.linkedFrom(tc.id, 'verifies', 'test_run'));
+      const states = runs.map((r) => testState(r).state);
       const open = versions.reduce((n, v) => n + openFindingsOn(store, v.id, requireHuman).length, 0);
-      const failing = runs.filter((r) => BLOCKING_STATUS.has(String(decidingRun(r)?.content.status))).length;
+      const failing = states.filter((s) => s === 'failing').length;
+      const incomplete = states.filter((s) => s !== 'failing' && s !== 'passed').length;
       const suspect = isSuspect(store, req);
       const untested = tests.length === 0;
-      const status: RequirementStatus['status'] = open || failing ? 'blocked' : suspect || untested ? 'warning' : 'clear';
+      const status: RequirementStatus['status'] =
+        open || failing ? 'blocked' : untested || incomplete ? 'unknown' : suspect ? 'warning' : 'clear';
       return {
         requirementId: req.id,
         sourceRef: req.sourceRef,
@@ -262,6 +348,7 @@ export function requirementStatus(
         assumptions: answers.filter((a) => a.content.assumption === true).length,
         tests: tests.length,
         failing,
+        incomplete,
         flaky: runs.filter(flakyOn).length,
         suspect,
         untested,
@@ -286,8 +373,9 @@ export function requirementStatus(
  */
 export function assessReleaseRisk(
   store: TraceStore,
-  input: { changed: string[]; releaseRef?: string; requireHumanAnswers?: boolean },
+  input: { changed: string[]; releaseRef?: string; requireHumanAnswers?: boolean; blockOnSuspect?: boolean } & Scope,
 ) {
+  const scope: Scope = { commit: input.commit?.trim() || undefined, environment: input.environment?.trim() || undefined };
   const changed = [...new Set(input.changed.map((r) => r.trim()).filter((r) => r))];
   if (!changed.length) throw new Error('changed must not be empty');
 
@@ -334,21 +422,33 @@ export function assessReleaseRisk(
     })),
   );
 
-  // The latest run decides: a later pass clears an earlier failure without superseding it.
-  // Two exceptions. A test case a heal replaced no longer decides anything; its current
-  // version does (`currentTestCases`). And every covering test counts, whoever recorded it,
-  // not only ingested ones — but a pass typed in by hand clears only with a name on it
-  // (decidingRun), and is reported in `handEntered`; an unnamed one is `heldPass` below.
+  // The latest run that counts decides (testState): a later pass clears an earlier failure
+  // without superseding it; a skip does not. A test case a heal replaced no longer decides
+  // anything; its current version does (`currentTestCases`). Every covering test counts,
+  // whoever recorded it, not only ingested ones — but a pass typed in by hand clears only with
+  // a name on it, and is reported in `handEntered`. Tests are those of every version of each
+  // current requirement, the same set readiness and coverage read.
+  const current = requirements.filter((req) => isCurrent(store, req));
   const flaky: { testCaseId: string; requirementId: string; name: string }[] = [];
   const handEntered: { testCaseId: string; testRunId: string; requirementId: string; name: string; status: string; by: string }[] = [];
-  const testSignals: RiskSignal[] = requirements.flatMap((req) =>
-    currentOf(store, store.linkedFrom(req.id, 'covers', 'test_case')).flatMap((tc) => {
+  const incomplete: IncompleteTest[] = [];
+  const testSignals: RiskSignal[] = current.flatMap((req) =>
+    coveringTests(store, req).flatMap((tc) => {
       const runs = store.linkedFrom(tc.id, 'verifies', 'test_run');
-      const latest = decidingRun(runs);
-      // Anything newer than the deciding run is an unnamed hand-entered pass it skipped.
-      const heldPass = latest && runs[0] !== latest ? runs[0] : null;
-      if (!latest) return [];
+      const t = testState(runs, scope);
       const name = String(tc.content.name ?? tc.sourceRef ?? tc.id);
+      if (t.state !== 'passed' && t.state !== 'failing') {
+        incomplete.push({
+          testCaseId: tc.id,
+          requirementId: req.id,
+          name,
+          state: t.state,
+          testRunId: t.run?.id ?? null,
+          status: t.run ? String(t.run.content.status) : null,
+        });
+        return [];
+      }
+      const latest = t.run!;
       const unreliable = flakyOn(runs);
       if (unreliable) flaky.push({ testCaseId: tc.id, requirementId: req.id, name });
       const status = String(latest.content.status);
@@ -362,7 +462,8 @@ export function assessReleaseRisk(
           by: String(latest.provenance.approvedBy),
         });
       }
-      if (!BLOCKING_STATUS.has(status)) return [];
+      if (t.state !== 'failing') return [];
+      const heldPass = t.heldBy;
       return [
         {
           kind: 'failing_test_on_changed_area' as const,
@@ -376,7 +477,8 @@ export function assessReleaseRisk(
             status,
             message: typeof latest.content.message === 'string' ? latest.content.message : null,
             flaky: unreliable,
-            ...(heldPass ? { handRecordedPass: heldPass.id, heldBecause: HAND_RECORDED_PASS_HELD } : {}),
+            ...(heldPass && isHandRecordedPass(heldPass) ? { handRecordedPass: heldPass.id } : {}),
+            ...(heldPass ? { heldBecause: heldBecause(heldPass) } : {}),
           },
         },
       ];
@@ -416,16 +518,29 @@ export function assessReleaseRisk(
   // Suspect: the current version of a requirement that replaced an earlier one and has not
   // been audited since — its tests and answers were written against wording that changed.
   // A warning, not a signal: the gate blocks on it only when asked to.
-  const current = requirements.filter((req) => isCurrent(store, req));
   const suspect = current.flatMap((req) => {
     const previousIds = previousVersions(store, req);
     return isSuspect(store, req) ? [{ requirementId: req.id, sourceRef: req.sourceRef, previousIds }] : [];
   });
 
-  // Untested: no test covers the requirement in any of its versions. A warning, like suspect.
+  // Untested: no test covers the requirement in any of its versions. Nothing shows it works.
   const untested = current.flatMap((req) =>
     coveringTests(store, req).length ? [] : [{ requirementId: req.id, sourceRef: req.sourceRef }],
   );
+
+  const has = (state: IncompleteTest['state']) => incomplete.some((t) => t.state === state);
+  const present: Record<ReasonCode, boolean> = {
+    UNANSWERED_FINDING: findingSignals.length > 0,
+    FAILED_TEST: testSignals.length > 0,
+    SCOPE_UNRESOLVED: requirements.length === 0,
+    NO_TEST: untested.length > 0,
+    NO_REQUIRED_RUN: has('not_run'),
+    SKIPPED_REQUIRED_TEST: has('skipped'),
+    INVALID_STATUS: has('invalid'),
+    // Opt-in: an edit since the last audit is reported either way, and blocks only when asked.
+    STALE_AUDIT: !!input.blockOnSuspect && suspect.length > 0,
+  };
+  const reasons = REASONS.filter((code) => present[code]);
 
   // ponytail: merges whole chain() results, which on a densely linked store could be a large
   // subgraph. Bound the walk by depth if that becomes a problem.
@@ -441,9 +556,12 @@ export function assessReleaseRisk(
   }
 
   return {
-    release: { ref: input.releaseRef ?? null, changed },
+    release: { ref: input.releaseRef ?? null, changed, ...scope },
+    decision: decide(reasons),
+    reasons,
     matched: { requirements: requirements.map((r) => r.id), unmatched },
     signals,
+    incomplete,
     flaky,
     handEntered,
     retracted: [...retracted.values()],
@@ -532,7 +650,8 @@ export function recordVerdict(
     assessedChanged?: string[];
     /** AI answers retire a question only once a person approves them. Default: the env var. */
     requireHumanAnswers?: boolean;
-  },
+    blockOnSuspect?: boolean;
+  } & Scope,
 ): Artifact {
   const releaseRef = input.releaseRef.trim();
   if (!releaseRef) throw new Error('releaseRef must not be blank');
@@ -561,10 +680,22 @@ export function recordVerdict(
     throw new Error('override is only meaningful with a ship verdict');
   }
 
-  const { release, signals, matched, suspect, untested, retracted } = assessReleaseRisk(store, {
+  const { release, signals, matched, suspect, untested, retracted, reasons } = assessReleaseRisk(store, {
     changed: input.changed,
     requireHumanAnswers: input.requireHumanAnswers,
+    commit: input.commit,
+    environment: input.environment,
+    blockOnSuspect: input.blockOnSuspect,
   });
+  // An override can accept known blockers, never missing evidence: checked before the
+  // blocker message below, so "pass override" is never offered as a fix for UNKNOWN.
+  const missing = reasons.filter((r) => !KNOWN_BLOCKERS.has(r));
+  if (input.verdict === 'ship' && missing.length && (overrideReason || !signals.length)) {
+    throw new Error(
+      `cannot ship: the evidence is incomplete (${missing.join(', ')}) — add tests, run them on this ` +
+        'build, or record a hold. An override accepts a known risk; it cannot vouch for what was never checked',
+    );
+  }
   const liveFindings = signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail.findingId] : []));
   const failing = signals.flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []));
   const liveTestRuns = [...new Set(failing.map((t) => t.testRunId))];
@@ -621,6 +752,12 @@ export function recordVerdict(
     sourceRef: releaseRef,
     content: {
       verdict: input.verdict,
+      // What the evidence showed, beside what the person decided: a hold can be recorded over
+      // a release the evidence would ship, and a reader should see both.
+      decision: decide(reasons, !!override),
+      reasons,
+      ...(release.commit ? { commit: release.commit } : {}),
+      ...(release.environment ? { environment: release.environment } : {}),
       reason,
       // reuse the normalization assessReleaseRisk already did, rather than re-deriving
       // an identical `changed` list here — a duplicate that could silently drift.

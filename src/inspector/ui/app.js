@@ -585,7 +585,7 @@ async function readinessView(changed) {
 
   const { rows } = await get('/api/readiness' + (changed ? `?changed=${encodeURIComponent(changed)}` : ''));
   const count = (s) => rows.filter((r) => r.status === s).length;
-  crumbs.replaceChildren(`${count('blocked')} blocked · ${count('warning')} need attention · ${count('clear')} clear`);
+  crumbs.replaceChildren(`${count('blocked')} blocked · ${count('unknown')} not shown to work · ${count('warning')} need attention · ${count('clear')} clear`);
   if (!rows.length) return view.replaceChildren(bar, h('p', { className: 'empty' }, 'No requirements match.'));
 
   const notes = (r) =>
@@ -595,6 +595,7 @@ async function readinessView(changed) {
       r.flaky && `${r.flaky} flaky`,
       r.suspect && 'edited since audit',
       r.untested && 'no tests',
+      r.incomplete && `${r.incomplete} not run, skipped or unreadable`,
       r.assumptions && `${r.assumptions} assumption${r.assumptions === 1 ? '' : 's'}`,
     ].filter(Boolean).join(' · ');
   view.replaceChildren(

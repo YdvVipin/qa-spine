@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Artifact, Edge, Provenance, type Chain, type Relation } from './schema.ts';
+import { Artifact, Edge, Provenance, RUN_STATUSES, type Chain, type Relation } from './schema.ts';
 
 /**
  * Append-only trace store. Enforcement lives in SQLite triggers rather than in this
@@ -226,6 +226,12 @@ export class TraceStore {
       provenance: input.provenance,
       createdAt: new Date().toISOString(),
     });
+    // Here rather than in each writer, so ingest, `record`, `trace_record` and the importers
+    // cannot disagree. mergeFrom bypasses it on purpose: an old store's rows still merge, and
+    // the gate reads an unknown status as UNKNOWN.
+    if (artifact.type === 'test_run' && !(RUN_STATUSES as readonly unknown[]).includes(artifact.content.status)) {
+      throw new Error(`test_run status ${JSON.stringify(artifact.content.status)} is not one of ${RUN_STATUSES.join(', ')}`);
+    }
 
     this.insertArtifact(artifact, input.links ?? []);
     return artifact;

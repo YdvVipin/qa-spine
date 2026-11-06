@@ -32,7 +32,7 @@ export function renderCsv(rows: RequirementStatus[]): string {
   return [header, ...body].join('\n') + '\n';
 }
 
-const STATUS_WORDS = { blocked: 'Blocked', warning: 'Needs attention', clear: 'Clear' };
+const STATUS_WORDS = { blocked: 'Blocked', unknown: 'Not shown to work', warning: 'Needs attention', clear: 'Clear' };
 
 export function renderMatrixHtml(rows: RequirementStatus[], generatedAt = new Date()): string {
   const notes = (r: RequirementStatus) =>
@@ -42,6 +42,7 @@ export function renderMatrixHtml(rows: RequirementStatus[], generatedAt = new Da
       r.flaky ? `${r.flaky} flaky` : '',
       r.suspect ? 'edited since last checked' : '',
       r.untested ? 'no tests' : '',
+      r.incomplete ? `${r.incomplete} test${r.incomplete === 1 ? '' : 's'} with no result showing ${r.incomplete === 1 ? 'it works' : 'they work'}` : '',
       r.assumptions ? `${r.assumptions} answer${r.assumptions === 1 ? '' : 's'} accepted as suggested` : '',
     ]
       .filter(Boolean)
@@ -55,7 +56,7 @@ export function renderMatrixHtml(rows: RequirementStatus[], generatedAt = new Da
   .wrap { overflow-x:auto; } table { border-collapse:collapse; width:100%; }
   th, td { text-align:left; padding:.5rem .7rem; border-bottom:1px solid #e2e5ea; vertical-align:top; }
   th { font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; color:#5c6472; }
-  td.n { font-variant-numeric:tabular-nums; } .blocked { color:#b8431c; font-weight:600; } .warning { color:#8a5a00; font-weight:600; } .clear { color:#1f7a4a; }
+  td.n { font-variant-numeric:tabular-nums; } .blocked { color:#b8431c; font-weight:600; } .warning, .unknown { color:#8a5a00; font-weight:600; } .clear { color:#1f7a4a; }
 </style></head><body>
 <h1>Traceability matrix</h1>
 <p class="sub">${rows.length} requirement${rows.length === 1 ? '' : 's'} · generated ${esc(generatedAt.toISOString().slice(0, 16).replace('T', ' '))} UTC</p>

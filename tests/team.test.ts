@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { TraceStore } from '../src/trace/store.ts';
+import { passingTest } from './support.ts';
 import { createServer } from '../src/server.ts';
 import { assessReleaseRisk, recordVerdict } from '../src/release.ts';
 import { recordAnswer, loadRubric } from '../src/audit.ts';
@@ -54,6 +55,7 @@ test('audit-ticket for a ref with no requirement says so rather than inventing o
 
 function seedAnswered(store: TraceStore, producer: 'ai' | 'human') {
   const req = store.record({ type: 'requirement', sourceRef: 'PROJ-9', content: { text: 'r' }, provenance: human });
+  passingTest(store, req.id);
   const finding = store.record({ type: 'finding', content: { question: 'How quick?' }, provenance: ai, links: [{ to: req.id, relation: 'derived_from' }] });
   const answer = recordAnswer(store, { findingId: finding.id, answer: 'Two days.', provenance: producer === 'ai' ? ai : human });
   return { finding, answer };

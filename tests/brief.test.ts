@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { TraceStore } from '../src/trace/store.ts';
+import { passingTest } from './support.ts';
 import { renderBrief, longDate } from '../src/brief.ts';
 import { recordVerdict } from '../src/release.ts';
 
@@ -221,6 +222,7 @@ test('C1: a finding cited to say it was resolved does not render as an open ques
     content: { text: 'Refunds must be processed quickly.' },
     provenance: human,
   });
+  passingTest(store, req.id);
   const finding = store.record({
     type: 'finding',
     sourceRef: 'PROJ-1',
@@ -616,7 +618,7 @@ test('a rerun recorded after the decision does not make the brief call the test 
 
 test('a verdict that dropped assessed areas says so in plain words', () => {
   const store = new TraceStore(':memory:');
-  store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
+  passingTest(store, store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human }).id);
   const v = recordVerdict(store, {
     releaseRef: 'r1', verdict: 'ship', reason: 'Clean.', cites: [], changed: ['PROJ-1'], provenance: human,
     assessedChanged: ['PROJ-1', 'src/pay.ts'],

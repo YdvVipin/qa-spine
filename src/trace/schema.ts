@@ -21,6 +21,14 @@ export const ArtifactType = z.enum([
 ]);
 
 /**
+ * What a test run may say happened. Only `passed` shows a test works; `failed` and `error`
+ * show it does not; the rest show nothing either way. A status outside this list is refused
+ * on write, because the gate cannot tell what it means — `banana` used to read as "not a
+ * failure", which is how it cleared one.
+ */
+export const RUN_STATUSES = ['passed', 'failed', 'error', 'skipped', 'blocked', 'not_run', 'cancelled', 'unknown'] as const;
+
+/**
  * How two artifacts relate. Edge direction is always new -> existing:
  * a finding is `derived_from` a requirement, a test_case `covers` a requirement,
  * a test_run `verifies` a test_case, a requirement `supersedes` its previous version.

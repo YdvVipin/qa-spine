@@ -38,9 +38,12 @@ jobs:
         with:
           db: .qa-spine/trace.db
           since: ${{ github.event.pull_request.base.sha }}
-          # Ticket keys often live in the title rather than the commits.
-          changed: ${{ github.event.pull_request.title }}
+          # Ticket keys often live in the title rather than the commits. `text` picks the
+          # keys out of it; the title itself is never a ref, and never runs as shell.
+          text: ${{ github.event.pull_request.title }}
           # junit: 'reports/**/*.xml'
+          # With junit, only results from this commit count. `commit: any` counts every
+          # build, for tests whose results reach the store from another workflow.
           comment: 'true'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 

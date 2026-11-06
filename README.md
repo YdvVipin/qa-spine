@@ -15,8 +15,9 @@ an unanswered question.
 
 ## Requirements
 
-Node >= 22.5 (uses the built-in `node:sqlite` — no native build step, no dependencies
-beyond the MCP SDK and Zod).
+Node >= 22.13, the first release where the built-in `node:sqlite` works without a flag — no
+native build step, no dependencies beyond the MCP SDK and Zod. CI installs the packed
+package on Linux, macOS and Windows under Node 22.13, 22, 24 and 26.
 
 ## Quickstart
 
@@ -33,7 +34,8 @@ seeded into it would be permanent.
 `.qa-spine/` to `.gitignore`, and prints the line to register the MCP server with Claude Code.
 
 The trace store is a SQLite file at `.qa-spine/trace.db`, overridable with `QA_SPINE_DB`. Rubrics
-are read from the package unless you point `QA_SPINE_RUBRICS` at your own directory.
+are read from `QA_SPINE_RUBRICS` when set, else from the project's `./rubrics` (the copy `init`
+made) when it has the rubric, else from the package. `init` prints the file audits will use.
 
 ## Working on qa-spine itself
 
@@ -41,7 +43,10 @@ are read from the package unless you point `QA_SPINE_RUBRICS` at your own direct
 npm install
 npm test
 npm run build
+npm pack && node scripts/smoke-package.mjs qa-spine-*.tgz   # test the package as installed
 ```
+
+Running from source needs Node >= 22.18, which runs TypeScript without a flag.
 
 ## Tools
 
@@ -172,7 +177,8 @@ review rather than a prompt buried in the server. Its `version` is stamped onto 
 finding as `promptVersion`, which is what makes "did that rubric edit help?" answerable
 from the exported review labels instead of a matter of taste.
 
-Point `QA_SPINE_RUBRICS` at your own directory to publish rubrics for your team.
+Edit the copy `init` put in `./rubrics` — the next audit reads it and stamps its `version` — or
+point `QA_SPINE_RUBRICS` at a shared directory to publish rubrics for your team.
 
 ### Is a rubric edit an improvement?
 
@@ -378,20 +384,38 @@ is worse than letting one awkward word through.
 The check is only worth having if it runs without anyone remembering to run it.
 
 ```bash
-npx qa-spine gate --since origin/main          # advisory: report and exit
+npx qa-spine gate --since origin/main                    # report only: writes nothing
+npx qa-spine gate --since origin/main --commit "$(git rev-parse HEAD)"   # decide on this build
 npx qa-spine gate --since origin/main --record --release-ref v1.4.0
 ```
 
 `--since` derives what the change touched from git: file paths from the diff, ticket keys
-from the commit messages. `--changed` adds refs directly, for keys that live in a pull
-request title rather than a commit. Neither needs a network or a token.
+from the commit messages. `--changed` adds refs exactly as written. `--text` takes free text
+such as a pull request title and assesses only the ticket keys in it (by `--ticket-pattern`),
+so "PROJ-42: fix refunds" is PROJ-42, not a ref nobody recorded. None of them needs a network
+or a token.
 
-**The exit code is the product.** `0` nothing blocks, `1` an unanswered question is live,
-`2` the gate could not tell. An empty store, an unknown git ref, and no refs at all are
-all `2` — never a green check, because a gate that reports "all clear" when it actually
-checked nothing is worse than no gate.
+**The exit code is the product.** Every surface — the gate, `assess_release_risk`,
+`release_submit`, the readiness view — reaches the same `decision`, with `reasons`:
 
-Advisory by default: it writes nothing, and that is what belongs on every push. `--record`
+| Decision | Means | Exit |
+|---|---|---:|
+| `SHIP` | Every changed requirement has a covering test that passed, and nothing blocks | 0 |
+| `HOLD` | A known blocker: an unanswered question (`UNANSWERED_FINDING`) or a failing test (`FAILED_TEST`) | 1 |
+| `UNKNOWN` | Evidence is missing: nothing in the record matches the change (`SCOPE_UNRESOLVED`), a requirement has no test (`NO_TEST`), a covering test has no run that counts (`NO_REQUIRED_RUN`), its latest run was skipped (`SKIPPED_REQUIRED_TEST`) or has a status qa-spine cannot read (`INVALID_STATUS`), or `--block-on-suspect` and an edit since the last audit (`STALE_AUDIT`) | 2 |
+| `OVERRIDDEN` | A named person accepted the known blockers | 0 |
+
+An empty store, an unknown git ref, and no refs at all are also `2`, with no decision —
+never a green check, because a gate that reports "all clear" when it actually checked
+nothing is worse than no gate. When a failure and missing evidence coexist the decision is
+`HOLD` and `reasons` keeps both. `shippable` is still in the JSON (true on `SHIP` and
+`OVERRIDDEN`) for 0.3 readers.
+
+`--advisory` reports without enforcing: it exits 0 whatever the decision, while the JSON,
+the summary heading and the Action's `decision` output still say `HOLD` or `UNKNOWN`. Use
+it to watch a new policy before letting it fail builds; it never turns into a ship verdict.
+
+Without `--record` the gate writes nothing, and that is what belongs on every push. `--record`
 writes a verdict and belongs on a release event. The ledger is append-only, so a verdict
 per push could never be removed, and a month of ordinary work would bury every real
 release decision under thousands of machine-written ones.
@@ -400,8 +424,10 @@ release decision under thousands of machine-written ones.
 question was never answered is exactly the decision worth keeping, and the one a project
 manager most needs the brief for.
 
-**Shipping anyway needs a name.** `--override-reason` requires `--approved-by`, and the
-verdict records both alongside the questions that were open at the time. The gate writes
+**Shipping anyway needs a name.** `--override-reason` requires `--approved-by` — both
+trimmed, so a name of spaces is no name — and the verdict records both alongside the
+questions that were open at the time. An override accepts a known risk; it cannot vouch for
+what was never checked, so it clears `HOLD` and never `UNKNOWN`. The gate writes
 its own reason only where the reason is a statement of fact, and says so plainly when
 nothing in the record covered the change at all — a release where nothing matched is not
 a clean release, and reporting it as one would manufacture confidence the ledger never
@@ -409,9 +435,10 @@ earned.
 
 ### Coverage and reports
 
-A changed requirement that no test covers, in any of its versions, is **untested**. The gate
-lists it and the brief names it; `--require-coverage` (Action input `require-coverage`) makes
-it block, and only a test clears that.
+A changed requirement that no test covers, in any of its versions, is **untested**: the
+decision is `UNKNOWN`, the gate lists it and the brief names it, and only a test clears it.
+Before 0.4 this was a warning unless `--require-coverage`; that flag (and the Action input)
+is still accepted and now changes nothing.
 
 ```bash
 qa-spine export --format csv  > matrix.csv     # one row per requirement, for a spreadsheet or an auditor
@@ -421,7 +448,8 @@ qa-spine export --format jsonl > ledger.jsonl  # every artifact and edge
 
 `--changed PROJ-1,PROJ-2` limits the matrix to what a change touches. The Inspector's
 **readiness** view is the same list, worst first: blocked (an open question or a failing
-test), needs attention (edited since its audit, or untested), clear.
+test), not shown to work (untested, or a covering test with no run that counts), needs
+attention (edited since its audit), clear.
 
 ### Answering questions
 
@@ -452,8 +480,8 @@ an import is safe.
 An edited requirement is **suspect** until it is audited again: its questions were answered
 and its tests written against wording that changed. The gate lists suspect requirements on
 the areas a change touches, the verdict records them, and the brief names them. It is a
-warning by default. `--block-on-suspect` (Action input `block-on-suspect`) makes it block,
-and only a re-audit clears it — an override is a person accepting a known risk, and a
+warning by default. `--block-on-suspect` (Action input `block-on-suspect`) makes it
+`UNKNOWN`, and only a re-audit clears it — an override is a person accepting a known risk, and a
 requirement nobody has looked at since it changed is not known yet.
 
 An audit that finds nothing is itself recorded: `audit_submit` with an empty `findings` list
@@ -473,7 +501,24 @@ matching requirement is reported as `uncovered`.
 
 On the gate, a covering test whose **latest** run failed or errored blocks, exactly like an
 unanswered question, and needs the same named override to ship over. A later passing run
-clears it; nothing is superseded, the newer fact wins. Skipped does not block.
+clears it; nothing is superseded, the newer fact wins. **Only a pass clears a failure**: a
+skip after a failure leaves the failure deciding, and a test whose latest run was skipped is
+`UNKNOWN`, not clear. A covering test that never ran is `UNKNOWN` too.
+
+A run's `status` must be one of `passed`, `failed`, `error`, `skipped`, `blocked`, `not_run`,
+`cancelled`, `unknown`; any other value is refused on write, through every path. (A status
+written before 0.4 that is not on the list reads as `UNKNOWN`, never as a pass. Producers
+that wrote `completed` must now write `passed`.)
+
+**Which build.** `--commit SHA` and `--environment NAME` bind the decision to one build:
+only runs that carry that commit (or environment) count, so a pass on an older build or a
+different environment cannot clear a failure on this one, and a required test with no run on
+this build is `UNKNOWN`. `ingest-junit` records the commit (default `git rev-parse HEAD`) and
+`--environment` on every run. Left out, runs on any build count, as before.
+
+**Replayed reports count once.** The same `--run-ref` delivering the same results again — a
+CI upload retried after a timeout — records nothing new. The same ref reporting a different
+outcome is refused: give a re-run its own ref (the Action adds the attempt number).
 
 Two rules decide which run counts (changed after 0.2.0, see the changelog):
 
@@ -520,6 +565,20 @@ Copy [examples/github-workflow.yml](examples/github-workflow.yml) into
 The token is used by `gh` to post the comment and never reaches qa-spine, which
 authenticates to nothing. Everything the action does beyond that is a shell call to the
 same CLI, so any other CI system is a few lines of its own YAML rather than a port.
+
+Every input reaches the action's script through the environment, never spliced into its
+source, so a pull request title holding `$(…)` or a quote is read as text. Pass the title as
+`text`, not `changed`. `version` must be a release (`0.4.0`) or a dist-tag (`latest`).
+
+With `junit` set, the gate decides on the checked-out commit: results recorded for another
+build do not count, so a test that did not run in this job is UNKNOWN. Set `commit: any` when
+your tests run in another workflow and their results reach the store some other way.
+`version` defaults to the release the Action was tested with, not `latest`.
+
+Inputs `commit`, `environment` and `advisory` map to
+the gate flags of the same names; the `decision` output carries `SHIP`, `HOLD`, `UNKNOWN` or
+`OVERRIDDEN`, and the job fails with exit 1 on `HOLD` and 2 on `UNKNOWN` (unless advisory),
+after posting the summary either way.
 
 **The store is yours to provide.** Commit it, restore it from a cache, or fetch it before
 the step runs — but it has to be there. The action fails the job when it is missing or

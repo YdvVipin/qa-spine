@@ -1,0 +1,68 @@
+# qa-spine's own CI. Tests run from source; the smoke jobs install the one tarball packed
+# here, so what passes is the artifact that gets published, not the working tree.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.18 is the oldest Node that runs .ts without a flag; the package itself needs 22.13.
+        node: ['22.18.0', '24', '26']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  pack:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: mkdir pkg && npm pack --pack-destination pkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: pkg/*.tgz
+
+  smoke:
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['22.13.0', '22', '24', '26']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: pkg
+      - shell: bash
+        run: node scripts/smoke-package.mjs pkg/*.tgz

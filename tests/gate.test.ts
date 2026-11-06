@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { TraceStore } from '../src/trace/store.ts';
+import { passingTest } from './support.ts';
 
 const REPO = process.cwd();
 const human = { producer: 'human' as const };
@@ -53,12 +54,15 @@ function seed(dbPath: string) {
   });
   // A second requirement with nothing open, so a clean pass is reachable from real data
   // rather than only from a ref that matches nothing.
-  store.record({
+  const proj7 = store.record({
     type: 'requirement',
     sourceRef: 'PROJ-7',
     content: { text: 'The refund button is disabled while a refund is in flight.' },
     provenance: human,
   });
+  // Both tested and passing, so the only thing between PROJ-42 and a ship is its open question.
+  passingTest(store, req.id);
+  passingTest(store, proj7.id);
   return { store, req, open };
 }
 
@@ -439,12 +443,12 @@ test('--block-on-suspect blocks, and an override does not clear it', async () =>
     const db = join(dir, 'trace.db');
     const { store } = seed(db);
     await editProj7(store);
-    assert.equal(gate(['--changed', 'PROJ-7', '--block-on-suspect'], db).code, 1);
+    assert.equal(gate(['--changed', 'PROJ-7', '--block-on-suspect'], db).code, 2, 'unaudited since the edit: UNKNOWN');
     const overridden = gate(
       ['--changed', 'PROJ-7', '--block-on-suspect', '--record', '--release-ref', 'v6', '--override-reason', 'Hotfix.', '--approved-by', 'a.rivera', '--json'],
       db,
     );
-    assert.equal(overridden.code, 1, 'only a re-audit clears a suspect requirement');
+    assert.equal(overridden.code, 2, 'only a re-audit clears a suspect requirement');
     const verdict = new TraceStore(db).get(JSON.parse(overridden.out).recorded.verdictId)!;
     assert.equal(verdict.content.verdict, 'hold');
     assert.match(String(verdict.content.reason), /edited after they were last checked/);
@@ -463,7 +467,8 @@ test('--block-on-suspect with a question and an override holds rather than error
       ['--changed', 'PROJ-7,PROJ-42', '--block-on-suspect', '--record', '--release-ref', 'v7', '--override-reason', 'Hotfix.', '--approved-by', 'a.rivera', '--json'],
       db,
     );
-    assert.equal(r.code, 1, r.err);
+    assert.equal(r.code, 2, r.err);
+    assert.equal(JSON.parse(r.out).decision, 'UNKNOWN', 'the override accepted the question; the unaudited edit is still unknown');
     assert.equal(JSON.parse(r.out).recorded.verdict, 'hold');
   } finally {
     rmSync(dir, { recursive: true, force: true });
