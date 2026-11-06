@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -84,7 +85,13 @@ try {
     }
     assert.match(page ?? '', /<html/i, 'the Inspector did not serve its page');
   } finally {
-    inspector.kill();
+    // Wait for it to go: on Windows a live process holding the folder as its cwd blocks the
+    // cleanup below with EBUSY.
+    if (inspector.exitCode === null && inspector.signalCode === null) {
+      const exited = once(inspector, 'exit');
+      inspector.kill();
+      await exited;
+    }
   }
 
   console.log(`ok — qa-spine ${pkg.version} on Node ${process.version} (${process.platform})`);
