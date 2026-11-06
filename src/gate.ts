@@ -1,7 +1,16 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import type { TraceStore } from './trace/store.ts';
-import { assessReleaseRisk, recordVerdict, type FailingTest, type Retracted } from './release.ts';
+import {
+  assessReleaseRisk,
+  decide,
+  recordVerdict,
+  type Decision,
+  type FailingTest,
+  type IncompleteTest,
+  type ReasonCode,
+  type Retracted,
+} from './release.ts';
 import { renderBrief } from './brief.ts';
 
 export const TOOL = 'qa-spine gate';
@@ -12,6 +21,8 @@ export const DEFAULT_TICKET_PATTERN = '[A-Z][A-Z0-9]+-\\d+';
 
 export type GateOptions = {
   changed: string[];
+  /** Free text, such as a PR title: only the ticket keys in it are assessed, never the text itself. */
+  text?: string[];
   since?: string;
   ticketPattern?: string;
   releaseRef?: string;
@@ -22,8 +33,12 @@ export type GateOptions = {
   briefPath?: string;
   /** Block while a changed requirement was edited after its last audit. Off by default. */
   blockOnSuspect?: boolean;
-  /** Block while a changed requirement has no test covering it. Off by default. */
-  requireCoverage?: boolean;
+  /** Only runs on this commit count. Left out, runs on any commit do. */
+  commit?: string;
+  /** Only runs in this environment count. Left out, runs in any do. */
+  environment?: string;
+  /** Report the decision without enforcing it: the CLI exits 0, the JSON still says HOLD or UNKNOWN. */
+  advisory?: boolean;
   /** An AI answer retires a question only once a person approves it. Default: the env var. */
   requireHumanAnswers?: boolean;
   cwd?: string;
@@ -32,7 +47,15 @@ export type GateOptions = {
 };
 
 export type GateResult = {
+  /** SHIP and OVERRIDDEN exit 0, HOLD 1, UNKNOWN 2 — unless `enforcement` is advisory. */
+  decision: Decision;
+  /** Every reason the evidence fell short, known blockers first. Empty only on SHIP. */
+  reasons: ReasonCode[];
+  enforcement: 'enforcing' | 'advisory';
+  /** True on SHIP and OVERRIDDEN. Kept for readers of the 0.3 JSON; read `decision`. */
   shippable: boolean;
+  commit: string | null;
+  environment: string | null;
   releaseRef: string | null;
   changed: string[];
   matched: { requirements: string[] };
@@ -52,6 +75,8 @@ export type GateResult = {
    *  the JSON, which expect every signal to be a question, keep working. */
   failingTests: FailingTest[];
   /** Tests on changed areas that failed and passed on the same commit. Information only. */
+  /** Covering tests with no result that shows whether they work on this build. */
+  incomplete: IncompleteTest[];
   flakyTests: { testCaseId: string; requirementId: string; name: string }[];
   /** Tests whose deciding result was typed in by hand rather than ingested, and who vouched for it. */
   handEntered: { testCaseId: string; testRunId: string; requirementId: string; name: string; status: string; by: string }[];
@@ -59,9 +84,9 @@ export type GateResult = {
   retracted: Retracted[];
   /** Changed requirements edited since their last audit. A warning unless --block-on-suspect. */
   suspect: { requirementId: string; sourceRef: string | null; previousIds: string[] }[];
-  /** Changed requirements no test covers in any version. A warning unless --require-coverage. */
+  /** Changed requirements no test covers in any version. Nothing shows they work: UNKNOWN. */
   untested: { requirementId: string; sourceRef: string | null }[];
-  /** Whether suspect / untested requirements are blocking this run, not just reported. */
+  /** Whether suspect / untested requirements are blocking this run. Untested always is, since 0.4. */
   suspectBlocking: boolean;
   coverageBlocking: boolean;
   recorded: { verdictId: string; verdict: 'ship' | 'hold'; briefPath: string | null } | null;
@@ -90,13 +115,16 @@ function git(args: string[], cwd: string): string {
  * Three-dot for paths — what this branch changed, not what happened on the base since it
  * forked. Two-dot for messages — the commits actually on this branch.
  */
-export function refsFromGit(since: string, cwd: string, ticketPattern: string): string[] {
-  let pattern: RegExp;
+function ticketRegex(ticketPattern: string): RegExp {
   try {
-    pattern = new RegExp(ticketPattern, 'g');
+    return new RegExp(ticketPattern, 'g');
   } catch (err) {
     throw new GateError(`--ticket-pattern is not a valid regular expression: ${(err as Error).message}`);
   }
+}
+
+export function refsFromGit(since: string, cwd: string, ticketPattern: string): string[] {
+  const pattern = ticketRegex(ticketPattern);
 
   const paths = git(['diff', '--name-only', `${since}...HEAD`], cwd)
     .split('\n')
@@ -118,34 +146,30 @@ export function refsFromGit(since: string, cwd: string, ticketPattern: string): 
  * clean release, and reporting it in the first case's words would manufacture confidence the
  * record never earned.
  */
-export function defaultReason(
-  signalCount: number,
-  matchedCount: number,
-  failingCount = 0,
-  suspectBlocking = false,
-  coverageBlocking = false,
-): string {
-  if (!signalCount && !failingCount && !suspectBlocking && coverageBlocking) {
-    return 'Requirements this release changed have no tests, so nothing checked that they still work.';
-  }
-  if (!signalCount && !failingCount && suspectBlocking) {
-    return 'Requirements this release changed were edited after they were last checked, and have not been checked again.';
-  }
-  if (signalCount && failingCount) {
+export function defaultReason(reasons: readonly ReasonCode[]): string {
+  const has = (r: ReasonCode) => reasons.includes(r);
+  if (has('UNANSWERED_FINDING') && has('FAILED_TEST')) {
     return (
       'One or more questions raised when this work was specified have not been answered, ' +
       'and tests covering areas this release changed are failing.'
     );
   }
-  if (signalCount) {
+  if (has('UNANSWERED_FINDING')) {
     return (
       'One or more questions raised when this work was specified have not been answered, ' +
       'and they touch areas this release changed.'
     );
   }
-  if (failingCount) return 'Tests covering areas this release changed are failing.';
-  if (!matchedCount) {
+  if (has('FAILED_TEST')) return 'Tests covering areas this release changed are failing.';
+  if (has('SCOPE_UNRESOLVED')) {
     return 'Nothing in the record covers the areas this release changed, so no questions could be checked.';
+  }
+  if (has('NO_TEST')) return 'Requirements this release changed have no tests, so nothing checked that they still work.';
+  if (has('NO_REQUIRED_RUN') || has('SKIPPED_REQUIRED_TEST') || has('INVALID_STATUS')) {
+    return 'Tests covering areas this release changed have no result showing they pass on this build.';
+  }
+  if (has('STALE_AUDIT')) {
+    return 'Requirements this release changed were edited after they were last checked, and have not been checked again.';
   }
   return 'No unanswered questions were found on the areas this release changed.';
 }
@@ -156,6 +180,7 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
   const changed = [
     ...new Set([
       ...opts.changed,
+      ...(opts.text ?? []).flatMap((t) => t.match(ticketRegex(opts.ticketPattern ?? DEFAULT_TICKET_PATTERN)) ?? []),
       ...(opts.since ? refsFromGit(opts.since, cwd, opts.ticketPattern ?? DEFAULT_TICKET_PATTERN) : []),
     ]),
   ]
@@ -163,7 +188,7 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     .filter(Boolean);
 
   if (!changed.length) {
-    throw new GateError('nothing to assess: pass --changed, or --since to derive refs from git');
+    throw new GateError('nothing to assess: pass --changed, --text with a ticket key in it, or --since to derive refs from git');
   }
 
   // An empty store matches nothing, raises no signal and would otherwise report a green
@@ -173,10 +198,21 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     throw new GateError('the trace store is empty — check QA_SPINE_DB points at a real store');
   }
 
+  // Here rather than in the CLI, so every caller gets it, and trimmed: a name of three spaces
+  // is no name, and it used to pass whenever the gate was not recording.
+  const overrideReason = opts.overrideReason?.trim() || undefined;
+  const approvedBy = opts.approvedBy?.trim() || undefined;
+  if (!!overrideReason !== !!approvedBy) {
+    throw new GateError('--override-reason and --approved-by must be given together');
+  }
+
+  const scope = { commit: opts.commit?.trim() || undefined, environment: opts.environment?.trim() || undefined };
   const assessment = assessReleaseRisk(store, {
     changed,
     releaseRef: opts.releaseRef,
     requireHumanAnswers: opts.requireHumanAnswers,
+    blockOnSuspect: opts.blockOnSuspect,
+    ...scope,
   });
   const signals = assessment.signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail] : []));
   // One entry per failing run: a test covering two changed requirements is one failing test,
@@ -185,17 +221,19 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
   const failingTests = assessment.signals
     .flatMap((s) => (s.kind === 'failing_test_on_changed_area' ? [s.detail] : []))
     .filter((t) => !seenRuns.has(t.testRunId) && !!seenRuns.add(t.testRunId));
-  const blocked = signals.length + failingTests.length > 0;
-  const overriding = !!opts.overrideReason && blocked;
-  // An override is a person accepting a known risk. A requirement nobody has audited since
-  // it changed is not a known risk yet, so only a re-audit clears this block.
-  const suspectBlocking = !!opts.blockOnSuspect && assessment.suspect.length > 0;
-  // Same reasoning for a missing test: only adding one clears it.
-  const coverageBlocking = !!opts.requireCoverage && assessment.untested.length > 0;
-  const shippable = (!blocked || overriding) && !suspectBlocking && !coverageBlocking;
+  // An override accepts a known risk. It does nothing for missing evidence — an untested or
+  // unaudited requirement is not a known risk yet — so decide() keeps those UNKNOWN.
+  const overriding = !!overrideReason && assessment.decision === 'HOLD';
+  const decision = decide(assessment.reasons, overriding);
+  const shippable = decision === 'SHIP' || decision === 'OVERRIDDEN';
 
   const result: GateResult = {
+    decision,
+    reasons: assessment.reasons,
+    enforcement: opts.advisory ? 'advisory' : 'enforcing',
     shippable,
+    commit: scope.commit ?? null,
+    environment: scope.environment ?? null,
     releaseRef: opts.releaseRef ?? null,
     changed: assessment.release.changed,
     matched: { requirements: assessment.matched.requirements },
@@ -205,13 +243,14 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     },
     signals,
     failingTests,
+    incomplete: assessment.incomplete,
     flakyTests: assessment.flaky,
     handEntered: assessment.handEntered,
     retracted: assessment.retracted,
     suspect: assessment.suspect,
     untested: assessment.untested,
-    suspectBlocking,
-    coverageBlocking,
+    suspectBlocking: assessment.reasons.includes('STALE_AUDIT'),
+    coverageBlocking: assessment.reasons.includes('NO_TEST'),
     recorded: null,
   };
 
@@ -234,22 +273,20 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
   const recorded = recordVerdict(store, {
     releaseRef: opts.releaseRef,
     verdict,
-    reason:
-      opts.reason?.trim() ||
-      defaultReason(signals.length, assessment.matched.requirements.length, failingTests.length, suspectBlocking, coverageBlocking),
+    reason: opts.reason?.trim() || defaultReason(assessment.reasons),
     cites,
     changed,
     // Only when it overrides something. recordVerdict rejects an override alongside a hold,
     // and discards one that overrode nothing.
-    override: overriding && verdict === 'ship' ? { reason: opts.overrideReason! } : undefined,
+    override: overriding && verdict === 'ship' ? { reason: overrideReason! } : undefined,
     requireHumanAnswers: opts.requireHumanAnswers,
+    blockOnSuspect: opts.blockOnSuspect,
+    ...scope,
     provenance: {
       producer: 'tool',
       tool: TOOL,
       ...(opts.toolVersion ? { toolVersion: opts.toolVersion } : {}),
-      ...(opts.approvedBy?.trim()
-        ? { approvedBy: opts.approvedBy.trim(), approvedAt: new Date().toISOString() }
-        : {}),
+      ...(approvedBy ? { approvedBy, approvedAt: new Date().toISOString() } : {}),
     },
   });
 
@@ -279,11 +316,17 @@ const bullet = (s: string) => `- ${s}`;
 export function renderSummary(r: GateResult): string {
   const lines: string[] = [];
 
-  lines.push(r.shippable ? '## qa-spine: no blockers' : '## qa-spine: release blocked');
+  const heading: Record<Decision, string> = {
+    SHIP: 'no blockers',
+    OVERRIDDEN: 'no blockers',
+    HOLD: 'release blocked',
+    UNKNOWN: 'cannot tell — evidence is missing',
+  };
+  lines.push(`## qa-spine: ${heading[r.decision]}` + (r.enforcement === 'advisory' ? ' (advisory: not enforced)' : ''));
   lines.push('');
+  const overridden = r.decision === 'OVERRIDDEN';
 
   if (r.signals.length) {
-    const overridden = r.shippable;
     lines.push(
       `**${r.signals.length} unanswered question${r.signals.length === 1 ? '' : 's'} on areas this change touches**` +
         (overridden ? ' — overridden.' : ''),
@@ -312,17 +355,34 @@ export function renderSummary(r: GateResult): string {
   if (r.failingTests.length) {
     const n = r.failingTests.length;
     lines.push(
-      `**${n} failing test${n === 1 ? '' : 's'} on areas this change touches**` + (r.shippable ? ' — overridden.' : ''),
+      `**${n} failing test${n === 1 ? '' : 's'} on areas this change touches**` + (overridden ? ' — overridden.' : ''),
     );
     lines.push('');
     for (const t of r.failingTests) {
       const flaky = t.flaky ? ', flaky: it also passed on the same commit' : '';
       lines.push(bullet(`${t.sourceRef ?? 'no reference'} — ${t.name} (${t.status}${flaky})`));
       if (t.message) lines.push(`  > ${t.message.split('\n')[0]}`);
-      // A later pass exists but was typed in by a person, so it did not clear this failure.
+      // A later run exists but did not clear this failure: typed in by hand, or a skip.
       if (t.heldBecause) {
-        lines.push(`  Not cleared: ${t.heldBecause}. It counts only with a named approver and a reason (see below).`);
+        lines.push(
+          `  Not cleared: ${t.heldBecause}.` +
+            (t.handRecordedPass ? ' It counts only with a named approver and a reason (see below).' : ''),
+        );
       }
+    }
+    lines.push('');
+  }
+
+  if (r.incomplete.length) {
+    const n = r.incomplete.length;
+    const why = {
+      not_run: 'no result that counts' + (r.commit || r.environment ? ' for this build' : ''),
+      skipped: 'latest run was skipped',
+      invalid: 'latest result has a status qa-spine cannot read',
+    };
+    lines.push(`**${n} test${n === 1 ? '' : 's'} on areas this change touches ${n === 1 ? 'has' : 'have'} nothing showing ${n === 1 ? 'it works' : 'they work'}:**`);
+    for (const t of r.incomplete) {
+      lines.push(bullet(`${t.name} — ${why[t.state]}${t.state === 'invalid' ? ` (${JSON.stringify(t.status)})` : ''}`));
     }
     lines.push('');
   }
@@ -358,10 +418,7 @@ export function renderSummary(r: GateResult): string {
 
   if (r.untested.length) {
     const n = r.untested.length;
-    lines.push(
-      `**${n} changed requirement${n === 1 ? ' has' : 's have'} no tests**` +
-        (r.coverageBlocking ? ' — add a test to clear; an override does not' : '') + ':',
-    );
+    lines.push(`**${n} changed requirement${n === 1 ? ' has' : 's have'} no tests** — add a test to clear; an override does not:`);
     for (const u of r.untested) lines.push(bullet(u.sourceRef ?? u.requirementId));
     lines.push('');
   }
@@ -389,8 +446,13 @@ export function renderSummary(r: GateResult): string {
     }
   }
 
-  // Only when an override would actually unblock: it cannot clear a suspect or untested block.
-  if (!r.shippable && (r.signals.length || r.failingTests.length) && !r.suspectBlocking && !r.coverageBlocking) {
+  if (r.reasons.includes('SCOPE_UNRESOLVED')) {
+    lines.push('');
+    lines.push('No requirement in the record matches this change, so there is nothing to decide on. Import the tickets it implements, or pass them with `--changed`.');
+  }
+
+  // Only when an override would actually unblock: it cannot clear missing evidence.
+  if (r.decision === 'HOLD' && decide(r.reasons, true) === 'OVERRIDDEN') {
     lines.push('');
     lines.push(
       'To ship anyway, a named person accepts the risk: add ' +

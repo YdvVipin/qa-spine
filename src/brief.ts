@@ -77,6 +77,15 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
 
   const c = verdict.content as Record<string, any>;
   const shipped = c.verdict === 'ship';
+  // What the evidence showed, apart from what the person decided. Absent on verdicts recorded
+  // before 0.4, which say nothing here rather than something they never recorded.
+  const EVIDENCE: Record<string, string> = {
+    SHIP: 'every changed area has a test that passed, and nothing blocks.',
+    HOLD: 'a known problem is unresolved.',
+    UNKNOWN: 'incomplete — some changed areas have nothing showing they work.',
+    OVERRIDDEN: 'known problems remain, and a named person accepted them.',
+  };
+  const evidence = EVIDENCE[String(c.decision)];
   const reason = String(c.reason ?? '').trim();
   const changed: string[] = Array.isArray(c.changed) ? c.changed : [];
   const unmatched = new Set<string>(Array.isArray(c.unmatched) ? c.unmatched : []);
@@ -228,6 +237,7 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
 <main>
   <h1>${shipped ? 'Cleared to ship' : 'Not ready to ship'}</h1>
   <p class="sub">Release ${esc(verdict.sourceRef ?? 'unrecorded')} · decision recorded on ${esc(longDate(verdict.createdAt))}.</p>
+  ${evidence ? `<p>What the evidence showed: ${esc(evidence)}</p>` : ''}
 
   <h2>Why this decision was made</h2>
   <p>${reason ? esc(reason) : 'No explanation was provided with this decision.'}</p>

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TraceStore } from '../src/trace/store.ts';
+import { passingTest } from './support.ts';
 import { assessReleaseRisk, recordVerdict } from '../src/release.ts';
 
 const human = { producer: 'human' as const };
@@ -820,7 +821,7 @@ for (const type of ['finding', 'audit'] as const) {
 test('a verdict records suspect requirements, and records nothing when there are none', async () => {
   const store = new TraceStore(':memory:');
   await seedVersions(store, 1);
-  store.record({ type: 'requirement', sourceRef: 'PROJ-51', content: { text: 'Clean.' }, provenance: human });
+  passingTest(store, store.record({ type: 'requirement', sourceRef: 'PROJ-51', content: { text: 'Clean.' }, provenance: human }).id);
   const withSuspect = recordVerdict(store, { releaseRef: 'r', verdict: 'hold', reason: 'Checking.', cites: [], changed: ['PROJ-50'], provenance: human });
   assert.deepEqual(withSuspect.content.suspect, ['PROJ-50']);
   const clean = recordVerdict(store, { releaseRef: 'r', verdict: 'ship', reason: 'Fine.', cites: [], changed: ['PROJ-51'], provenance: human });

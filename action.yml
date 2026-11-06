@@ -18,8 +18,14 @@ inputs:
     default: ''
   changed:
     description: >-
-      Extra refs to assess, comma-separated. Use this for ticket keys that live in the
-      pull request title or body rather than in commit messages.
+      Extra refs to assess, comma-separated, each taken exactly as written. For a pull
+      request title or body use `text`, which picks the ticket keys out of it.
+    required: false
+    default: ''
+  text:
+    description: >-
+      Free text such as the pull request title: the ticket keys in it (matched by
+      ticket-pattern) are assessed, the rest is ignored. Read as data, never run.
     required: false
     default: ''
   junit:
@@ -38,8 +44,26 @@ inputs:
     default: 'false'
   require-coverage:
     description: >-
-      Fail while a requirement this change touches has no test covering it. Off by default:
-      it is reported either way. Only adding a test clears it, not an override.
+      No longer has any effect: since 0.4 a requirement with no test is always UNKNOWN and
+      fails the job. Accepted so existing workflows keep running.
+    required: false
+    default: 'false'
+  commit:
+    description: >-
+      Decide on this build only: test results recorded for any other commit do not count,
+      and a required test with no result on this commit is UNKNOWN. Usually
+      the github.sha expression, which is what this Action records on reports it ingests. Empty
+      counts results from any commit.
+    required: false
+    default: ''
+  environment:
+    description: 'Only test results recorded for this environment count. Also recorded on ingested reports.'
+    required: false
+    default: ''
+  advisory:
+    description: >-
+      Report the decision without failing the job. The summary and the `decision` output
+      still say HOLD or UNKNOWN; only the exit status changes.
     required: false
     default: 'false'
   ticket-pattern:
@@ -77,13 +101,16 @@ inputs:
     required: false
     default: ''
   version:
-    description: 'Version of qa-spine to run.'
+    description: 'Version of qa-spine to run: a release such as 0.4.0, or a dist-tag such as latest.'
     required: false
     default: 'latest'
 
 outputs:
+  decision:
+    description: 'SHIP, HOLD (a known blocker), UNKNOWN (evidence missing) or OVERRIDDEN.'
+    value: ${{ steps.run.outputs.decision }}
   shippable:
-    description: '"true" when nothing blocks, "false" when an unanswered question does.'
+    description: '"true" on SHIP or OVERRIDDEN. Kept for 0.3 workflows; prefer decision.'
     value: ${{ steps.run.outputs.shippable }}
   verdict-id:
     description: 'The recorded verdict id, empty unless record was true.'
@@ -98,15 +125,40 @@ runs:
 
     - id: run
       shell: bash
+      # Every value reaches the script through the environment, never spliced into its source:
+      # a PR title holding $(...) or a quote is data. tests/ci-input.test.ts holds this.
       env:
         QA_SPINE_DB: ${{ inputs.db }}
+        QS_VERSION: ${{ inputs.version }}
+        QS_SINCE: ${{ inputs.since }}
+        QS_CHANGED: ${{ inputs.changed }}
+        QS_TEXT: ${{ inputs.text }}
+        QS_JUNIT: ${{ inputs.junit }}
+        QS_TICKET_PATTERN: ${{ inputs.ticket-pattern }}
+        QS_RELEASE_REF: ${{ inputs.release-ref }}
+        QS_RECORD: ${{ inputs.record }}
+        QS_BLOCK_ON_SUSPECT: ${{ inputs.block-on-suspect }}
+        QS_COMMIT: ${{ inputs.commit }}
+        QS_ENVIRONMENT: ${{ inputs.environment }}
+        QS_ADVISORY: ${{ inputs.advisory }}
+        QS_REASON: ${{ inputs.reason }}
+        QS_OVERRIDE_REASON: ${{ inputs.override-reason }}
+        QS_APPROVED_BY: ${{ inputs.approved-by }}
       run: |
         set -o pipefail
+
+        # A version or dist-tag only: anything else is a package spec, and npm:, file: or a URL
+        # after the @ would run some other package under this one's name.
+        if ! [[ "$QS_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|[a-z][a-z0-9-]*)$ ]]; then
+          echo "::error::qa-spine: version must be a release such as 0.4.0 or a dist-tag such as latest"
+          exit 2
+        fi
+        qs() { npx --yes "qa-spine@$QS_VERSION" "$@"; }
 
         # A ledger nobody can vouch for cannot clear or block a release: that is "could not
         # tell". Checked before anything reads it or writes to it.
         set +e
-        npx --yes qa-spine@${{ inputs.version }} verify > verify.json 2> verify.err
+        qs verify > verify.json 2> verify.err
         verify_status=$?
         set -e
         if [ "$verify_status" != "0" ]; then
@@ -117,17 +169,22 @@ runs:
 
         # Test results first, into the same store, so the gate below sees them. A glob that
         # matches nothing is an error: "no reports" read as "no failures" is a false green.
-        if [ -n "${{ inputs.junit }}" ]; then
+        if [ -n "$QS_JUNIT" ]; then
+          # Unquoted on purpose: split on spaces and expand the globs. Expansion never runs
+          # anything, so a pattern is still only a pattern.
           shopt -s nullglob globstar
-          reports=( ${{ inputs.junit }} )
+          reports=( $QS_JUNIT )
           shopt -u nullglob globstar
           if [ "${#reports[@]}" -eq 0 ]; then
-            echo "::error::qa-spine: junit pattern '${{ inputs.junit }}' matched no file"
+            echo "::error::qa-spine: junit pattern '$QS_JUNIT' matched no file"
             exit 2
           fi
+          # The attempt is part of the ref: a re-run is a new result, while a retried upload
+          # of the same attempt is recognised as one and not counted twice.
+          ingest_args=(--run-ref "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/${GITHUB_RUN_ATTEMPT:-1}")
+          [ -n "$QS_ENVIRONMENT" ] && ingest_args+=(--environment "$QS_ENVIRONMENT")
           set +e
-          npx --yes qa-spine@${{ inputs.version }} ingest-junit "${reports[@]}" \
-            --run-ref "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > ingest.json 2> ingest.err
+          qs ingest-junit "${reports[@]}" "${ingest_args[@]}" > ingest.json 2> ingest.err
           ingest_status=$?
           set -e
           if [ "$ingest_status" != "0" ]; then
@@ -141,26 +198,31 @@ runs:
         # gate twice would append a second verdict under --record, and an append-only
         # ledger cannot remove either.
         args=(gate --json --summary gate.md)
-        [ -n "${{ inputs.since }}" ]           && args+=(--since "${{ inputs.since }}")
-        [ -n "${{ inputs.changed }}" ]         && args+=(--changed "${{ inputs.changed }}")
-        [ -n "${{ inputs.ticket-pattern }}" ]  && args+=(--ticket-pattern "${{ inputs.ticket-pattern }}")
-        [ -n "${{ inputs.release-ref }}" ]     && args+=(--release-ref "${{ inputs.release-ref }}")
-        [ "${{ inputs.record }}" = "true" ]    && args+=(--record)
-        [ "${{ inputs.block-on-suspect }}" = "true" ] && args+=(--block-on-suspect)
-        [ "${{ inputs.require-coverage }}" = "true" ] && args+=(--require-coverage)
-        [ -n "${{ inputs.reason }}" ]          && args+=(--reason "${{ inputs.reason }}")
-        [ -n "${{ inputs.override-reason }}" ] && args+=(--override-reason "${{ inputs.override-reason }}")
-        [ -n "${{ inputs.approved-by }}" ]     && args+=(--approved-by "${{ inputs.approved-by }}")
+        [ -n "$QS_SINCE" ]                     && args+=(--since "$QS_SINCE")
+        [ -n "$QS_CHANGED" ]                   && args+=(--changed "$QS_CHANGED")
+        [ -n "$QS_TEXT" ]                      && args+=(--text "$QS_TEXT")
+        [ -n "$QS_TICKET_PATTERN" ]            && args+=(--ticket-pattern "$QS_TICKET_PATTERN")
+        [ -n "$QS_RELEASE_REF" ]               && args+=(--release-ref "$QS_RELEASE_REF")
+        [ "$QS_RECORD" = "true" ]              && args+=(--record)
+        [ "$QS_BLOCK_ON_SUSPECT" = "true" ]    && args+=(--block-on-suspect)
+        [ -n "$QS_COMMIT" ]                    && args+=(--commit "$QS_COMMIT")
+        [ -n "$QS_ENVIRONMENT" ]               && args+=(--environment "$QS_ENVIRONMENT")
+        [ "$QS_ADVISORY" = "true" ]            && args+=(--advisory)
+        [ -n "$QS_REASON" ]                    && args+=(--reason "$QS_REASON")
+        [ -n "$QS_OVERRIDE_REASON" ]           && args+=(--override-reason "$QS_OVERRIDE_REASON")
+        [ -n "$QS_APPROVED_BY" ]               && args+=(--approved-by "$QS_APPROVED_BY")
 
-        # Exit code is the product: 0 shippable, 1 blocked, 2 could not tell. Capture it
+        # Exit code is the product: 0 SHIP/OVERRIDDEN, 1 HOLD, 2 UNKNOWN or could not run. Capture it
         # rather than letting `set -e` end the step, so the summary still gets posted —
         # then re-raise it at the bottom so a blocked gate really does fail the job.
         set +e
-        npx --yes qa-spine@${{ inputs.version }} "${args[@]}" > gate.json 2> gate.err
+        qs "${args[@]}" > gate.json 2> gate.err
         status=$?
         set -e
 
-        if [ "$status" = "2" ]; then
+        # 2 is either UNKNOWN, which has a decision and a summary worth posting, or a gate
+        # that could not run at all, which has neither.
+        if [ "$status" = "2" ] && ! node -e 'process.exit(JSON.parse(require("fs").readFileSync("gate.json", "utf8")).decision ? 0 : 1)' 2>/dev/null; then
           echo "::error::qa-spine gate could not assess this change"
           cat gate.err >&2
           exit 2
@@ -169,24 +231,28 @@ runs:
         node -e '
           const r = JSON.parse(require("fs").readFileSync("gate.json", "utf8"));
           const out = process.env.GITHUB_OUTPUT;
+          require("fs").appendFileSync(out, `decision=${r.decision}\n`);
           require("fs").appendFileSync(out, `shippable=${r.shippable}\n`);
           require("fs").appendFileSync(out, `verdict-id=${r.recorded ? r.recorded.verdictId : ""}\n`);
         '
+        echo "exit=$status" >> "$GITHUB_OUTPUT"
 
         cat gate.md >> "$GITHUB_STEP_SUMMARY"
-
-        echo "status=$status" >> "$GITHUB_ENV"
         exit 0
 
     - if: inputs.comment == 'true' && github.event_name == 'pull_request'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-      run: gh pr comment "${{ github.event.pull_request.number }}" --body-file gate.md
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: gh pr comment "$PR_NUMBER" --body-file gate.md
 
     - shell: bash
+      env:
+        QS_EXIT: ${{ steps.run.outputs.exit }}
       run: |
-        if [ "${status:-0}" != "0" ]; then
-          echo "::error::qa-spine gate: unanswered questions on the areas this change touches"
-          exit 1
-        fi
+        case "${QS_EXIT:-0}" in
+          0) ;;
+          1) echo "::error::qa-spine gate: HOLD — a known blocker on the areas this change touches (see the summary)"; exit 1 ;;
+          *) echo "::error::qa-spine gate: UNKNOWN — evidence is missing for the areas this change touches (see the summary)"; exit 2 ;;
+        esac

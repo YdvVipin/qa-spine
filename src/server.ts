@@ -13,6 +13,7 @@ import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
 import {
   auditRequirement,
   loadRubric,
+  rubricPath,
   submitFindings,
   AuditFinding,
   openQuestions,
@@ -280,7 +281,9 @@ export function createServer(store: TraceStore) {
         'human does not clear an earlier failure without a named override), ' +
         'plus the surrounding artifacts as unscored evidence. Makes no model ' +
         'call: reason over what it returns, then record your brief with `release_submit`. ' +
-        'Every signal blocks a ship verdict.',
+        '`decision` is SHIP, HOLD (a known blocker) or UNKNOWN (evidence missing: no matching ' +
+        'requirement, no test, or a test with no run that counts), with `reasons`. Only SHIP, or a ' +
+        'HOLD with a named override, can be recorded as ship; UNKNOWN cannot be overridden.',
       inputSchema: {
         changed: z
           .array(z.string())
@@ -290,6 +293,8 @@ export function createServer(store: TraceStore) {
           .string()
           .optional()
           .describe('e.g. release/2026.7.3. Becomes the verdict sourceRef on submit.'),
+        commit: z.string().optional().describe('Only test runs on this commit count. Left out, runs on any commit do.'),
+        environment: z.string().optional().describe('Only test runs in this environment count.'),
       },
     },
     (args) => {
@@ -322,6 +327,8 @@ export function createServer(store: TraceStore) {
           .array(z.string())
           .min(1)
           .describe('The same list passed to assess_release_risk. Signals are recomputed from it.'),
+        commit: z.string().optional().describe('Only test runs on this commit count. Left out, runs on any commit do.'),
+        environment: z.string().optional().describe('Only test runs in this environment count.'),
         override: z
           .object({
             reason: z.string().describe('Why you are shipping anyway. Blank is rejected.'),
@@ -436,7 +443,8 @@ usage: qa-spine [subcommand]
                           answer an open question (--accept-suggestion to take its default)
   retract <id> --by <name> --reason <why>
                           withdraw something recorded by mistake; retract the retraction to undo
-  gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
+  gate --changed <ref>    release gate for CI — exit 0 SHIP, 1 HOLD, 2 UNKNOWN or error
+                          (--text <PR title> assesses the ticket keys in it)
   ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
   merge <other.db>        bring in what another verified store has and this one lacks
@@ -686,12 +694,14 @@ if (invokedAsScript()) {
       // because its caller parses one object; `brief` puts them on stderr because its output
       // is a document being redirected. Here the real product is the exit code — stdout
       // carries whichever reader was asked for, and a diagnostic must never be mistaken for
-      // either. 0 shippable, 1 blocked, 2 could not tell.
+      // either. 0 SHIP or OVERRIDDEN, 1 HOLD, 2 UNKNOWN or could not run. --advisory exits 0
+      // whatever the decision, and the decision itself still says what it is.
       try {
         const { values } = parseArgs({
           args: process.argv.slice(3),
           options: {
             changed: { type: 'string', multiple: true },
+            text: { type: 'string', multiple: true },
             since: { type: 'string' },
             'release-ref': { type: 'string' },
             record: { type: 'boolean' },
@@ -703,8 +713,12 @@ if (invokedAsScript()) {
             summary: { type: 'string' },
             json: { type: 'boolean' },
             'block-on-suspect': { type: 'boolean' },
+            // Accepted and ignored: since 0.4 an untested requirement always blocks.
             'require-coverage': { type: 'boolean' },
             'require-human-answers': { type: 'boolean' },
+            commit: { type: 'string' },
+            environment: { type: 'string' },
+            advisory: { type: 'boolean' },
           },
           allowPositionals: false,
         });
@@ -712,14 +726,11 @@ if (invokedAsScript()) {
         // Both spellings, because CI writes one long line and a person writes several.
         const changed = (values.changed ?? []).flatMap((c) => c.split(','));
 
-        if (!!values['override-reason'] !== !!values['approved-by']) {
-          throw new Error('--override-reason and --approved-by must be given together');
-        }
-
         const { runGate, renderSummary } = await import('./gate.ts');
         const store = new TraceStore(path);
         const result = runGate(store, {
           changed,
+          text: values.text,
           since: values.since,
           ticketPattern: values['ticket-pattern'],
           releaseRef: values['release-ref'],
@@ -729,7 +740,9 @@ if (invokedAsScript()) {
           approvedBy: values['approved-by'],
           briefPath: values.brief,
           blockOnSuspect: values['block-on-suspect'],
-          requireCoverage: values['require-coverage'],
+          commit: values.commit,
+          environment: values.environment,
+          advisory: values.advisory,
           requireHumanAnswers: values['require-human-answers'] || undefined,
           toolVersion: VERSION,
         });
@@ -738,7 +751,7 @@ if (invokedAsScript()) {
         // verdict to a ledger that cannot remove either.
         if (values.summary) writeFileSync(values.summary, renderSummary(result));
         console.log(values.json ? JSON.stringify(result, null, 2) : renderSummary(result));
-        process.exitCode = result.shippable ? 0 : 1;
+        process.exitCode = values.advisory ? 0 : { SHIP: 0, OVERRIDDEN: 0, HOLD: 1, UNKNOWN: 2 }[result.decision];
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 2;
@@ -857,11 +870,14 @@ if (invokedAsScript()) {
           options: {
             'run-ref': { type: 'string' },
             commit: { type: 'string' },
+            environment: { type: 'string' },
             'ticket-pattern': { type: 'string' },
           },
           allowPositionals: true,
         });
-        if (!positionals.length) throw new Error('usage: qa-spine ingest-junit <report.xml>... [--run-ref URL] [--commit SHA]');
+        if (!positionals.length) {
+          throw new Error('usage: qa-spine ingest-junit <report.xml>... [--run-ref URL] [--commit SHA] [--environment NAME]');
+        }
 
         const reports = positionals.map((file) => {
           try {
@@ -888,6 +904,7 @@ if (invokedAsScript()) {
           reports,
           runRef: values['run-ref'],
           commit,
+          environment: values.environment,
           ticketPattern: values['ticket-pattern'],
           toolVersion: VERSION,
         });
@@ -944,7 +961,7 @@ if (invokedAsScript()) {
       console.log('\nRegister with Claude Code:');
       console.log(`  claude mcp add qa-spine -- node ${resolve(packageRoot, 'dist', 'server.js')}`);
       console.log('\nThen: npx qa-spine demo   # see it working — writes only to a temp file');
-      console.log('Set QA_SPINE_RUBRICS to use rubrics from somewhere other than ./rubrics.');
+      console.log(`\nAudits use ${rubricPath()}. Set QA_SPINE_RUBRICS to read rubrics from another directory.`);
 
       if (failed) process.exitCode = 1;
       break;

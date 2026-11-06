@@ -46,8 +46,10 @@ function seedHeal(store: TraceStore, healCovers = true) {
 test('bug 1: a healed test whose replacement passes no longer blocks', () => {
   const store = new TraceStore(':memory:');
   const { tc2 } = seedHeal(store);
-  run(store, tc2.id, { status: 'completed', failed: 0 });
-  assert.deepEqual(failing(assessReleaseRisk(store, { changed: ['SCRUM-21'] })), []);
+  run(store, tc2.id, { status: 'passed', failed: 0 }, { ...human, approvedBy: 'qa.lead' });
+  const r = assessReleaseRisk(store, { changed: ['SCRUM-21'] });
+  assert.deepEqual(failing(r), []);
+  assert.equal(r.decision, 'SHIP');
 });
 
 test('bug 1: a healed test whose replacement fails still blocks, named by the replacement', () => {
@@ -219,13 +221,16 @@ function cli(args: string[], db: string, input?: string): { code: number; out: s
 }
 const rec = (db: string, a: unknown) => JSON.parse(cli(['record'], db, JSON.stringify(a)).out).id as string;
 
-test('repro A via the CLI: generate, fail, heal, pass gives shippable true', () => {
+test('repro A via the CLI: generate, fail, heal, named pass gives shippable true; QAAE\'s old "completed" is refused', () => {
   withDb((db) => {
     const req = rec(db, { type: 'requirement', sourceRef: 'SCRUM-21', content: { text: 'Shops page lists shops' }, provenance: human });
     const tc1 = rec(db, { type: 'test_case', sourceRef: 'features/shops.feature', content: { scenario_name: 'shops' }, provenance: ai, links: [{ to: req, relation: 'covers' }] });
     rec(db, { type: 'test_run', sourceRef: 'run1', content: { status: 'failed', failed: 1 }, provenance: human, links: [{ to: tc1, relation: 'verifies' }] });
     const tc2 = rec(db, { type: 'test_case', sourceRef: 'features/shops.feature', content: { strategy_used: 'locator_swap' }, provenance: human, links: [{ to: tc1, relation: 'supersedes' }, { to: req, relation: 'covers' }] });
-    rec(db, { type: 'test_run', sourceRef: 'run2', content: { status: 'completed', failed: 0 }, provenance: human, links: [{ to: tc2, relation: 'verifies' }] });
+    const old = cli(['record'], db, JSON.stringify({ type: 'test_run', sourceRef: 'run2', content: { status: 'completed', failed: 0 }, provenance: human, links: [{ to: tc2, relation: 'verifies' }] }));
+    assert.equal(old.code, 1);
+    assert.match(old.out, /status \\"completed\\" is not one of passed/);
+    rec(db, { type: 'test_run', sourceRef: 'run2', content: { status: 'passed', failed: 0 }, provenance: { ...human, approvedBy: 'qa.lead' }, links: [{ to: tc2, relation: 'verifies' }] });
     const { code, out } = cli(['gate', '--changed', 'SCRUM-21', '--json'], db);
     const r = JSON.parse(out);
     assert.equal(r.shippable, true);

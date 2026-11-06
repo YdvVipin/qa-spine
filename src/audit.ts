@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { TraceStore } from './trace/store.ts';
@@ -26,11 +26,15 @@ export const Rubric = z.object({
 export type RubricRule = z.infer<typeof RubricRule>;
 export type Rubric = z.infer<typeof Rubric>;
 
-/** Resolves from source and from a built `dist` alike: both sit one level under the package root. */
-export function rubricsDir(): string {
-  return process.env.QA_SPINE_RUBRICS
-    ? resolve(process.env.QA_SPINE_RUBRICS)
-    : resolve(import.meta.dirname, '..', 'rubrics');
+/**
+ * The rubric file an audit reads: `QA_SPINE_RUBRICS` when set (and only there), else the
+ * project's `./rubrics` — what `init` copies and tells you to edit — when it has this rubric,
+ * else the package's. The package path resolves from source and `dist` alike.
+ */
+export function rubricPath(name = 'ambiguity'): string {
+  if (process.env.QA_SPINE_RUBRICS) return resolve(process.env.QA_SPINE_RUBRICS, `${name}.json`);
+  const project = resolve('rubrics', `${name}.json`);
+  return existsSync(project) ? project : resolve(import.meta.dirname, '..', 'rubrics', `${name}.json`);
 }
 
 /**
@@ -38,7 +42,7 @@ export function rubricsDir(): string {
  * trace tools from working.
  */
 export function loadRubric(name = 'ambiguity'): Rubric {
-  const path = resolve(rubricsDir(), `${name}.json`);
+  const path = rubricPath(name);
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));

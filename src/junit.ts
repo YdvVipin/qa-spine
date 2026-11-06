@@ -181,6 +181,8 @@ export function ingestJunit(
     ticketPattern?: string;
     runRef?: string;
     commit?: string;
+    /** Where the tests ran, e.g. staging. A gate given --environment counts only runs that say so. */
+    environment?: string;
     toolVersion?: string;
   },
 ): IngestResult {
@@ -242,6 +244,25 @@ export function ingestJunit(
         }
       }
 
+      // A named run delivering its report again (a CI retry after a timeout) is one result,
+      // not two. Only for an explicit --run-ref: the default, the file name, repeats across
+      // every local run. A re-run with a different outcome needs its own ref (the Action adds
+      // the attempt number), so the same ref saying something else is refused, not appended.
+      const replayed = input.runRef?.trim()
+        ? store
+            .linkedFrom(testCase.id, 'verifies', 'test_run')
+            .find((r) => r.content.runRef === runRef && r.content.commit === input.commit && r.content.environment === input.environment)
+        : undefined;
+      if (replayed) {
+        if (replayed.content.status !== c.status) {
+          throw new Error(
+            `run ${runRef} already recorded "${c.name}" as ${replayed.content.status}, and this report says ${c.status} — ` +
+              'give a re-run its own --run-ref',
+          );
+        }
+        return { testCaseId: testCase.id, testRunId: replayed.id, name: c.name, status: c.status, flaky: replayed.content.flaky === true };
+      }
+
       const flaky = c.statuses.has('passed') && (c.statuses.has('failed') || c.statuses.has('error'));
       const run = store.record({
         type: 'test_run',
@@ -252,6 +273,7 @@ export function ingestJunit(
           ...(c.time ? { time: c.time } : {}),
           runRef,
           ...(input.commit ? { commit: input.commit } : {}),
+          ...(input.environment ? { environment: input.environment } : {}),
           ...(flaky ? { flaky: true } : {}),
         },
         provenance,
