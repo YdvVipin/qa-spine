@@ -42,7 +42,8 @@ jobs:
           # keys out of it; the title itself is never a ref, and never runs as shell.
           text: ${{ github.event.pull_request.title }}
           # junit: 'reports/**/*.xml'
-          # commit: ${{ github.sha }}    # with junit: only this build's results count
+          # With junit, only results from this commit count. `commit: any` counts every
+          # build, for tests whose results reach the store from another workflow.
           comment: 'true'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 

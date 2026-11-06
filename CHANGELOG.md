@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (planned 0.4.0)
+## 0.4.0 — 2026-11-06
 
 ### Changes in behaviour — read before upgrading: the gate now says UNKNOWN
 
@@ -51,6 +51,12 @@ evaluator.
   matched by `--ticket-pattern`. Text with no key in it is nothing to assess, not a pass.
 - Action: `decision` output; `commit`, `environment`, `advisory` inputs; the run ref includes
   the attempt number so a re-run is a new result; the summary is posted on UNKNOWN too.
+- **Action: with `junit`, the gate decides on the checked-out commit.** Results recorded for
+  another build no longer count, and the ingested reports carry the same commit. A test that
+  did not run in this job is UNKNOWN. Set `commit: any` to count results from every build
+  (tests split across workflows); an explicit `commit` still wins. The CLI stays opt-in.
+- **Action: `version` defaults to `0.4.0`**, not `latest`: a qa-spine release reaches a
+  workflow only when it moves to an Action tag that names it.
 
 ### Packaging
 

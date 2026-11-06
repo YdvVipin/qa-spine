@@ -42,13 +42,14 @@ test('action.yml: no ${{ }} expression inside a run script — every value arriv
 
 /** Stands in for npx: a shell function, so nothing is executed from a temp directory. */
 const STUB_NPX =
-  'npx() { printf "%s\\0" "$@" >> "$NPX_LOG"; ' +
+  'npx() { printf "%s\\0" "$@" "<end>" >> "$NPX_LOG"; ' +
   'if printf "%s\\n" "$@" | grep -qx gate; then echo "# summary" > gate.md; echo \'{"decision":"SHIP","shippable":true}\'; else echo "{}"; fi; }\n';
 
 /** Runs the Action's main step under bash with a stub npx that records what it was asked. */
-function runStep(env: Record<string, string>) {
+function runStep(env: Record<string, string>, setup?: (dir: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'qa-spine-action-'));
   try {
+    setup?.(dir);
     const script = runScripts().find((s) => s.includes('verify.json'))!;
     for (const f of ['out', 'summary']) writeFileSync(join(dir, f), '');
     const r = spawnSync('bash', ['-e', '-c', STUB_NPX + script], {
@@ -140,4 +141,44 @@ test('CLI: gate --text extracts keys with --ticket-pattern', () => {
     });
     assert.deepEqual(JSON.parse(out).changed, ['PROJ-42']);
   });
+});
+
+/** A checkout with one commit and one report, the way the Action finds them after a test step. */
+function checkout(dir: string) {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x');
+  writeFileSync(join(dir, 'report.xml'), '<testsuite/>');
+  return git('rev-parse', 'HEAD');
+}
+/** The value after `flag` in the npx call running `cmd`. */
+const argAfter = (log: string[], cmd: string, flag: string) => {
+  const call = log.slice(log.indexOf(cmd));
+  const args = call.slice(0, call.indexOf('<end>'));
+  return args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined;
+};
+
+test('Action: with junit, the gate counts only results from this commit, and ingest records the same commit', () => {
+  let sha = '';
+  const r = runStep({ QS_JUNIT: 'report.xml' }, (dir) => (sha = checkout(dir)));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(sha, /^[0-9a-f]{40}$/);
+  assert.equal(argAfter(r.log, 'ingest-junit', '--commit'), sha);
+  assert.equal(argAfter(r.log, 'gate', '--commit'), sha);
+});
+
+test('Action: commit "any" counts every build; an explicit commit wins; no junit, no binding', () => {
+  const any = runStep({ QS_JUNIT: 'report.xml', QS_COMMIT: 'any' }, checkout);
+  assert.equal(argAfter(any.log, 'gate', '--commit'), undefined);
+  const explicit = runStep({ QS_JUNIT: 'report.xml', QS_COMMIT: 'abc123' }, checkout);
+  assert.equal(argAfter(explicit.log, 'gate', '--commit'), 'abc123');
+  assert.equal(argAfter(explicit.log, 'ingest-junit', '--commit'), 'abc123');
+  const none = runStep({}, checkout);
+  assert.equal(argAfter(none.log, 'gate', '--commit'), undefined);
+});
+
+test('action.yml: the default version is this release, so a tag runs the package it was tested with', () => {
+  const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
+  const block = ACTION.slice(ACTION.indexOf('\n  version:'), ACTION.indexOf('\noutputs:'));
+  assert.match(block, new RegExp(`default: '${version.replaceAll('.', '\\.')}'`));
 });

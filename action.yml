@@ -51,9 +51,9 @@ inputs:
   commit:
     description: >-
       Decide on this build only: test results recorded for any other commit do not count,
-      and a required test with no result on this commit is UNKNOWN. Usually
-      the github.sha expression, which is what this Action records on reports it ingests. Empty
-      counts results from any commit.
+      and a required test with no result on this commit is UNKNOWN. Left empty with `junit`
+      set, it is the checked-out commit, which is also recorded on the ingested reports.
+      Left empty without `junit`, or set to `any`, results from every commit count.
     required: false
     default: ''
   environment:
@@ -101,9 +101,12 @@ inputs:
     required: false
     default: ''
   version:
-    description: 'Version of qa-spine to run: a release such as 0.4.0, or a dist-tag such as latest.'
+    description: >-
+      Version of qa-spine to run: a release such as 0.4.0, or a dist-tag such as latest.
+      Defaults to the release this Action was tested with, so a new release never changes a
+      workflow until it moves to a newer tag of the Action.
     required: false
-    default: 'latest'
+    default: '0.4.0'
 
 outputs:
   decision:
@@ -167,6 +170,14 @@ runs:
           exit 2
         fi
 
+        # Which build decides. With reports ingested here, this checkout: a pass recorded for
+        # another build says nothing about this one. `any` counts results from every build.
+        if [ "$QS_COMMIT" = "any" ]; then
+          QS_COMMIT=""
+        elif [ -z "$QS_COMMIT" ] && [ -n "$QS_JUNIT" ]; then
+          QS_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+        fi
+
         # Test results first, into the same store, so the gate below sees them. A glob that
         # matches nothing is an error: "no reports" read as "no failures" is a false green.
         if [ -n "$QS_JUNIT" ]; then
@@ -183,6 +194,7 @@ runs:
           # of the same attempt is recognised as one and not counted twice.
           ingest_args=(--run-ref "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/${GITHUB_RUN_ATTEMPT:-1}")
           [ -n "$QS_ENVIRONMENT" ] && ingest_args+=(--environment "$QS_ENVIRONMENT")
+          [ -n "$QS_COMMIT" ] && ingest_args+=(--commit "$QS_COMMIT")
           set +e
           qs ingest-junit "${reports[@]}" "${ingest_args[@]}" > ingest.json 2> ingest.err
           ingest_status=$?

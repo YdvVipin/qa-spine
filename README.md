@@ -570,7 +570,12 @@ Every input reaches the action's script through the environment, never spliced i
 source, so a pull request title holding `$(…)` or a quote is read as text. Pass the title as
 `text`, not `changed`. `version` must be a release (`0.4.0`) or a dist-tag (`latest`).
 
-Inputs `commit` (usually the `github.sha` expression), `environment` and `advisory` map to
+With `junit` set, the gate decides on the checked-out commit: results recorded for another
+build do not count, so a test that did not run in this job is UNKNOWN. Set `commit: any` when
+your tests run in another workflow and their results reach the store some other way.
+`version` defaults to the release the Action was tested with, not `latest`.
+
+Inputs `commit`, `environment` and `advisory` map to
 the gate flags of the same names; the `decision` output carries `SHIP`, `HOLD`, `UNKNOWN` or
 `OVERRIDDEN`, and the job fails with exit 1 on `HOLD` and 2 on `UNKNOWN` (unless advisory),
 after posting the summary either way.
