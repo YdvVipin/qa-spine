@@ -16,7 +16,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { TraceStore } from '../src/trace/store.ts';
 import { createServer } from '../src/server.ts';
-import { runGate } from '../src/gate.ts';
+import { runGate, renderSummary } from '../src/gate.ts';
 import { ingestJunit } from '../src/junit.ts';
 import { assessReleaseRisk, recordVerdict, requirementStatus } from '../src/release.ts';
 import { recordRetraction } from '../src/retract.ts';
@@ -90,8 +90,12 @@ test('a test whose only result is an unnamed hand-typed pass has not run as far 
   const s = new TraceStore(':memory:');
   const req = requirement(s);
   const tc = testCase(s, req.id);
-  testRun(s, tc.id, { status: 'passed' }, human);
-  assert.equal(runGate(s, { changed: ['QA-1'] }).decision, 'UNKNOWN');
+  const run = testRun(s, tc.id, { status: 'passed' }, human);
+  const r = runGate(s, { changed: ['QA-1'] });
+  assert.equal(r.decision, 'UNKNOWN');
+  // Say why: a pass is there, it only lacks a name. "No result" would send someone to re-run.
+  assert.equal(r.incomplete[0].testRunId, run.id);
+  assert.match(renderSummary(r), /a pass was recorded with no one named in approvedBy/);
 });
 
 // ---- skips do not prove anything ---------------------------------------------------------

@@ -382,7 +382,11 @@ export function renderSummary(r: GateResult): string {
     };
     lines.push(`**${n} test${n === 1 ? '' : 's'} on areas this change touches ${n === 1 ? 'has' : 'have'} nothing showing ${n === 1 ? 'it works' : 'they work'}:**`);
     for (const t of r.incomplete) {
-      lines.push(bullet(`${t.name} — ${why[t.state]}${t.state === 'invalid' ? ` (${JSON.stringify(t.status)})` : ''}`));
+      const reason =
+        t.state === 'not_run' && t.status === 'passed'
+          ? 'a pass was recorded with no one named in approvedBy, so it cannot count'
+          : why[t.state] + (t.state === 'invalid' ? ` (${JSON.stringify(t.status)})` : '');
+      lines.push(bullet(`${t.name} — ${reason}`));
     }
     lines.push('');
   }

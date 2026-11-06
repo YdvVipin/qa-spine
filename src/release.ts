@@ -116,7 +116,8 @@ export function testState(runs: Artifact[], scope: Scope = {}): TestState {
   const eligible = runs.filter((r) => inScope(r, scope));
   const counted = eligible.filter(counts);
   const head = counted[0];
-  if (!head) return { state: 'not_run' };
+  // Nothing counts. The newest result that does not (an unnamed pass) is kept so the gate can say why.
+  if (!head) return { state: 'not_run', run: eligible[0] };
   const status = String(head.content.status);
   const failure = BLOCKING_STATUS.has(status)
     ? head
