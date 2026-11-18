@@ -15,9 +15,9 @@ import { passingTest } from './support.ts';
 
 const ACTION = readFileSync('action.yml', 'utf8');
 
-/** Each `run:` script in action.yml, by indentation — no YAML dependency for one file. */
-function runScripts(): string[] {
-  const lines = ACTION.split('\n');
+/** Each `run:` script in a workflow file, by indentation — no YAML dependency for two files. */
+function runScripts(yaml = ACTION): string[] {
+  const lines = yaml.split('\n');
   const scripts: string[] = [];
   lines.forEach((line, i) => {
     const m = line.match(/^(\s*)(?:- )?run:\s*(.*)$/);
@@ -33,6 +33,12 @@ function runScripts(): string[] {
   });
   return scripts;
 }
+
+test('the example workflow people copy never puts PR text inside a run script', () => {
+  const example = readFileSync('examples/github-workflow.yml', 'utf8');
+  assert.match(example, /text: \$\{\{ github\.event\.pull_request\.title \}\}/, 'the title goes in as the text input');
+  for (const s of runScripts(example)) assert.doesNotMatch(s, /\$\{\{[^}]*github\.event\./);
+});
 
 test('action.yml: no ${{ }} expression inside a run script — every value arrives through env', () => {
   const scripts = runScripts();
