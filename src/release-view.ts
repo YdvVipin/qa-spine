@@ -10,7 +10,7 @@
 import type { TraceStore } from './trace/store.ts';
 import type { Artifact } from './trace/schema.ts';
 import { runGate } from './gate.ts';
-import { INGEST_TOOL, JIRA_KEY, recordVerdict, type Decision } from './release.ts';
+import { INGEST_TOOL, JIRA_KEY, defectOf, recordVerdict, type Decision } from './release.ts';
 import { DECISION_WORDS, verdictHeadline, type Tone } from './words.ts';
 
 export class ReleaseNotFound extends Error {}
@@ -86,14 +86,13 @@ export function releaseView(store: TraceStore, input: { release: string } & Part
   const failed = [
     ...g.failingTests.map((f) => {
       const run = store.get(f.testRunId);
-      const defect = run?.content.defect as { key?: unknown } | undefined;
-      const bug = defect?.key ?? run?.content.bug_key;
+      const bug = defectOf(run)?.key ?? null;
       return {
         story: storyOf(f.requirementId),
         title: title(req(f.requirementId)),
         what: f.name,
         when: run?.createdAt ?? '',
-        bug: typeof bug === 'string' && bug.trim() ? bug.trim() : null,
+        bug,
         by: reporter(run),
       };
     }),

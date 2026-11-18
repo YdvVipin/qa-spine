@@ -1,7 +1,7 @@
 import type { TraceStore } from './trace/store.ts';
 import { verdictHeadline } from './words.ts';
 import type { Artifact } from './trace/schema.ts';
-import { flakyOn, isHandRecordedPass } from './release.ts';
+import { defectOf, flakyOn, isHandRecordedPass } from './release.ts';
 
 /**
  * Renders one recorded verdict as a self-contained page for a non-technical reader.
@@ -192,11 +192,15 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const testBlocks = failingTests
     .map(({ run, name, flaky, handPassLater }) => {
       const message = String(run.content.message ?? '').trim();
+      const bug = defectOf(run);
+      // Only an http(s) link is ever recorded (defectProblem), so an href here cannot run script.
+      const bugLine = bug ? `<p class="q-note">Bug: ${bug.url ? `<a href="${esc(bug.url)}" rel="noopener noreferrer">${esc(bug.key)}</a>` : esc(bug.key)}</p>` : '';
       return `
       <div class="q">
         <div class="q-when">${handPassLater ? 'Last counted run' : 'Last run'} on ${esc(longDate(run.createdAt))}${run.content.status === 'error' ? ' · could not run to completion' : ''}</div>
         <div class="q-ask">${esc(name)}</div>
         ${message ? `<p class="q-quote">${esc(message)}</p>` : ''}
+        ${bugLine}
         ${flaky ? '<p class="q-note">This test also passed on the same version of the code, so it may be unreliable rather than a real fault.</p>' : ''}
         ${handPassLater ? '<p class="q-note">A later pass was entered by hand rather than coming from a test run, so it did not count without a named approver.</p>' : ''}
       </div>`;

@@ -140,7 +140,8 @@ export function createServer(store: TraceStore) {
         'there is no tool for it. A test_run `status` must be one of passed, failed, error, skipped, ' +
         'blocked, not_run, cancelled, unknown (`completed` is refused); a pass written here counts only ' +
         'when `provenance.approvedBy` names who vouches for it. Automated results belong in ' +
-        '`qa-spine ingest-junit`. Returns the recorded artifact, with its id.',
+        '`qa-spine ingest-junit`. A failed run may carry the bug that tracks it as ' +
+        '`content.defect`: {key: "ABC-123", url?, state?}. Returns the recorded artifact, with its id.',
       inputSchema: {
         type: ArtifactType.describe('What is being recorded: requirement, test_case, test_run, and so on.'),
         sourceRef: z

@@ -521,6 +521,11 @@ clears it; nothing is superseded, the newer fact wins. **Only a pass clears a fa
 skip after a failure leaves the failure deciding, and a test whose latest run was skipped is
 `UNKNOWN`, not clear. A covering test that never ran is `UNKNOWN` too.
 
+A failed run can carry the bug that tracks it: `content.defect = {"key": "SHOP-91", "url":
+"https://…", "state": "open"}`, checked when written (a Jira-shaped key; an http(s) link). The
+brief and the Release page show each failure with its bug. A `bug_key` string, the form RatifyQA
+sent before 0.4, is still read as the key.
+
 A run's `status` must be one of `passed`, `failed`, `error`, `skipped`, `blocked`, `not_run`,
 `cancelled`, `unknown`; any other value is refused on write, through every path. (A status
 written before 0.4 that is not on the list reads as `UNKNOWN`, never as a pass. Producers

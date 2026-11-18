@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Artifact, Edge, Provenance, RUN_STATUSES, type Chain, type Relation } from './schema.ts';
+import { Artifact, Edge, Provenance, RUN_STATUSES, defectProblem, type Chain, type Relation } from './schema.ts';
 
 /**
  * Append-only trace store. Enforcement lives in SQLite triggers rather than in this
@@ -231,6 +231,10 @@ export class TraceStore {
     // the gate reads an unknown status as UNKNOWN.
     if (artifact.type === 'test_run' && !(RUN_STATUSES as readonly unknown[]).includes(artifact.content.status)) {
       throw new Error(`test_run status ${JSON.stringify(artifact.content.status)} is not one of ${RUN_STATUSES.join(', ')}`);
+    }
+    if (artifact.type === 'test_run' && artifact.content.defect !== undefined) {
+      const problem = defectProblem(artifact.content.defect);
+      if (problem) throw new Error(problem);
     }
 
     this.insertArtifact(artifact, input.links ?? []);

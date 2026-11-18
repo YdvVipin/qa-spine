@@ -28,6 +28,22 @@ export const ArtifactType = z.enum([
  */
 export const RUN_STATUSES = ['passed', 'failed', 'error', 'skipped', 'blocked', 'not_run', 'cancelled', 'unknown'] as const;
 
+/** A Jira issue key: project, dash, number. */
+export const JIRA_KEY = /^[A-Z][A-Z0-9]+-\d+$/;
+
+/**
+ * C1: the bug a test run is tied to, as data rather than text in a reason. Optional; checked on
+ * write when present. Returns a message for the first problem, or undefined.
+ */
+export function defectProblem(defect: unknown): string | undefined {
+  if (!defect || typeof defect !== 'object' || Array.isArray(defect)) return 'defect must be an object like {"key": "ABC-123"}';
+  const d = defect as Record<string, unknown>;
+  if (typeof d.key !== 'string' || !JIRA_KEY.test(d.key)) return `defect.key ${JSON.stringify(d.key)} is not a Jira key like ABC-123`;
+  if (d.url !== undefined && (typeof d.url !== 'string' || !/^https?:\/\/\S+$/.test(d.url))) return 'defect.url must be an http(s) link';
+  if (d.state !== undefined && (typeof d.state !== 'string' || !d.state.trim())) return 'defect.state must be a non-empty word such as open or done';
+  return undefined;
+}
+
 /**
  * How two artifacts relate. Edge direction is always new -> existing:
  * a finding is `derived_from` a requirement, a test_case `covers` a requirement,

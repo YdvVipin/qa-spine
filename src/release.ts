@@ -1,6 +1,6 @@
 import type { TraceStore } from './trace/store.ts';
 import { HOW_TO_CLOSE } from './words.ts';
-import { RUN_STATUSES, type Artifact, type Edge, type Provenance } from './trace/schema.ts';
+import { JIRA_KEY, RUN_STATUSES, type Artifact, type Edge, type Provenance } from './trace/schema.ts';
 
 const INSTRUCTIONS =
   'Write a one-page release brief, then record it with release_submit. Cite an artifact id ' +
@@ -622,8 +622,17 @@ const INTERNAL_TERMS: RegExp[] = [
  * I3: also exported and reused by `submitFindings` in audit.ts to lint `question`, the other
  * field the brief renders verbatim from AI prose.
  */
-/** A Jira issue key: project, dash, number. */
-export const JIRA_KEY = /^[A-Z][A-Z0-9]+-\d+$/;
+export { JIRA_KEY };
+
+/** The bug a run is tied to: its `defect`, or the free-text `bug_key` written before 0.4. */
+export function defectOf(run: Artifact | undefined): { key: string; url?: string; state?: string } | null {
+  const d = run?.content.defect as { key?: unknown; url?: unknown; state?: unknown } | undefined;
+  if (d && typeof d.key === 'string') {
+    return { key: d.key, ...(typeof d.url === 'string' ? { url: d.url } : {}), ...(typeof d.state === 'string' ? { state: d.state } : {}) };
+  }
+  const old = run?.content.bug_key;
+  return typeof old === 'string' && old.trim() ? { key: old.trim() } : null;
+}
 
 export function assertPlainLanguage(field: string, text: string): void {
   for (const pattern of INTERNAL_TERMS) {

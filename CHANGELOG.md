@@ -52,6 +52,9 @@ evaluator.
   stored for an undecided release (its stories are in the link), so stores stay readable by 0.3.
 - **`npx qa-spine demo` opens the Release page** on three synthetic releases, one of each kind,
   and prints a link to each (`--no-open` to stay in the terminal; it never opens in CI).
+- **A failed run can carry its bug** as `content.defect: {key, url?, state?}`, checked on write
+  through every path (C1). The brief and the Release page list each failure with it; the older
+  free-text `bug_key` is still read.
 - Overrides carry their Jira bugs: `override.defects` on `release_submit`, `gate --defect KEY`.
 
 - `gate --commit SHA` / `--environment NAME` (and the same on `assess_release_risk`,
