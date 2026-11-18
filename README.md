@@ -5,13 +5,15 @@ An MCP server that exposes QA-lifecycle agents to any MCP-capable client, over a
 results → release verdict — and every AI-produced artifact records which model and which
 prompt version made it.
 
-Self-hostable, and nothing leaves your machine: the server never calls a model itself, it
-hands requirements and rubrics to the calling agent and validates what comes back. The
-server proposes; it never mutates JIRA, repos or CI without an explicit approval call.
+A release gate that says **UNKNOWN when it has no evidence**: a change with no test, a test
+that never ran, or (once you name the build with `--commit`) a pass from another build is never
+read as green, and no override can clear it. A known failure or an unanswered question is HOLD, which a named person can accept
+with a reason.
 
-**Status: Phases 1 through 5 complete, plus test results from CI.** The trace spine, the Inspector, the ambiguity
-audit, the queue for answering what it finds, and the release brief that refuses to ship over
-an unanswered question.
+Self-hostable, and the store is a local file: the server never calls a model and never sends
+anything anywhere. It hands requirements and rubrics to the calling agent and validates what
+comes back. (What an MCP client then sends to its own model is up to that client.) It never
+changes Jira, repositories or CI on its own.
 
 ## Requirements
 
@@ -142,8 +144,10 @@ marked with who withdrew it. Nothing is removed, so `qa-spine verify` passes bef
   lists every requirement, test or failed result withdrawn on the areas a change touches, with
   the name, the reason and the command that undoes it, and `--record` copies that list onto the
   verdict. The brief for that verdict shows it. A brief for an earlier verdict does not change.
-- **People only.** There is no MCP tool for it, so an agent cannot withdraw its own failing run.
-  `trace_record` and `record` refuse a `retraction` and a `retracts` link.
+- **Not over MCP.** There is no MCP tool for it, so an agent connected only over MCP cannot
+  withdraw its own failing run, and `trace_record` and `record` refuse a `retraction` and a
+  `retracts` link. An agent that also has a shell can run `qa-spine retract` like a person can:
+  this keeps retraction out of the agent's tool list, it is not a lock.
 
 **The name is not verified.** `--by` is whatever was typed, the same as `answer --by` and
 `gate --approved-by`, and the Inspector has no login: it is loopback-only, so anyone with a shell

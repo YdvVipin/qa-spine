@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 — 2026-11-06
+## 0.4.0 — 2026-11-18
 
 ### Changes in behaviour — read before upgrading: the gate now says UNKNOWN
 
