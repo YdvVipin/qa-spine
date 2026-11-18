@@ -70,6 +70,10 @@ evaluator.
 - **`init`** prints `claude mcp add qa-spine -- npx -y qa-spine@<version>` when run through
   `npx` (the old line pointed into npm's temporary `npx` cache), says in one sentence which folder
   it could not write to and what to do, and ends with the four commands to a first decision.
+- **`<command> --help`** (and `-h`) prints that command's usage, for every subcommand, without
+  opening a store or reading input. Before, most said "Unknown option", `record --help` waited for
+  input and `verify --help` ran verify. **An unknown subcommand exits 2, not 1**: to a CI script
+  `gate`'s 1 means HOLD, so a typo must not read as "release blocked".
 - **`demo`** keeps its store and brief in a new temporary folder per run and deletes it on Ctrl-C
   (it used to leave fixed files in the temp folder). If port 4700 is taken it uses another free
   port; a port you chose that is taken gets one sentence, for `inspect` too, instead of a crash.

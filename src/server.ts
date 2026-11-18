@@ -464,7 +464,16 @@ environment:
   QA_SPINE_DB    store path (default .qa-spine/trace.db)
   QA_SPINE_PORT  inspector port (default 4700)`;
 
-const SUBCOMMANDS = new Set([
+/** A subcommand's line in USAGE, with the indented lines that continue it. */
+function usageFor(sub: string): string {
+  const lines = USAGE.split('\n');
+  const start = lines.findIndex((l) => new RegExp(`^  ${sub}\\b`).test(l));
+  if (start < 0) return `qa-spine ${sub}`;
+  const end = lines.findIndex((l, i) => i > start && !/^ {3,}\S/.test(l));
+  return lines.slice(start, end < 0 ? undefined : end).join('\n');
+}
+
+export const SUBCOMMANDS = new Set([
   'init',
   'demo',
   'inspect',
@@ -535,9 +544,16 @@ export async function main(): Promise<void> {
     console.log(VERSION);
     process.exit(0);
   }
+  // 2, not 1: to a CI script, gate's 1 means HOLD, so a typo must not read as "blocked".
   if (subcommand !== undefined && !SUBCOMMANDS.has(subcommand)) {
     console.error(`unknown subcommand '${subcommand}'\n\n${USAGE}`);
-    process.exit(1);
+    process.exit(2);
+  }
+  // `<subcommand> --help`: its own lines from the usage screen, before anything opens a store
+  // or reads stdin (record would wait for input, verify would run).
+  if (subcommand !== undefined && process.argv.slice(3).some((a) => a === '--help' || a === '-h')) {
+    console.log(`${usageFor(subcommand)}\n\nAll commands: qa-spine help`);
+    process.exit(0);
   }
 
   // The store creates its own directory when opened, so a command that never opens the
