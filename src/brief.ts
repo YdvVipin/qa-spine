@@ -1,4 +1,5 @@
 import type { TraceStore } from './trace/store.ts';
+import { verdictHeadline } from './words.ts';
 import type { Artifact } from './trace/schema.ts';
 import { flakyOn, isHandRecordedPass } from './release.ts';
 
@@ -76,7 +77,6 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   }
 
   const c = verdict.content as Record<string, any>;
-  const shipped = c.verdict === 'ship';
   // What the evidence showed, apart from what the person decided. Absent on verdicts recorded
   // before 0.4, which say nothing here rather than something they never recorded.
   const EVIDENCE: Record<string, string> = {
@@ -86,6 +86,7 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
     OVERRIDDEN: 'known problems remain, and a named person accepted them.',
   };
   const evidence = EVIDENCE[String(c.decision)];
+  const headline = verdictHeadline(c).headline;
   const reason = String(c.reason ?? '').trim();
   const changed: string[] = Array.isArray(c.changed) ? c.changed : [];
   const unmatched = new Set<string>(Array.isArray(c.unmatched) ? c.unmatched : []);
@@ -230,12 +231,12 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Release ${esc(verdict.sourceRef ?? '')} — ${shipped ? 'cleared to ship' : 'not ready to ship'}</title>
+<title>Release ${esc(verdict.sourceRef ?? '')} — ${esc(headline)}</title>
 <style>${STYLE}</style>
 </head>
 <body>
 <main>
-  <h1>${shipped ? 'Cleared to ship' : 'Not ready to ship'}</h1>
+  <h1>${esc(headline)}</h1>
   <p class="sub">Release ${esc(verdict.sourceRef ?? 'unrecorded')} · decision recorded on ${esc(longDate(verdict.createdAt))}.</p>
   ${evidence ? `<p>What the evidence showed: ${esc(evidence)}</p>` : ''}
 

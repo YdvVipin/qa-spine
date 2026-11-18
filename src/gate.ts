@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
+import { DECISION_WORDS } from './words.ts';
 import type { TraceStore } from './trace/store.ts';
 import {
   assessReleaseRisk,
@@ -316,13 +317,7 @@ const bullet = (s: string) => `- ${s}`;
 export function renderSummary(r: GateResult): string {
   const lines: string[] = [];
 
-  const heading: Record<Decision, string> = {
-    SHIP: 'no blockers',
-    OVERRIDDEN: 'no blockers',
-    HOLD: 'release blocked',
-    UNKNOWN: 'cannot tell — evidence is missing',
-  };
-  lines.push(`## qa-spine: ${heading[r.decision]}` + (r.enforcement === 'advisory' ? ' (advisory: not enforced)' : ''));
+  lines.push(`## qa-spine: ${DECISION_WORDS[r.decision].headline}` + (r.enforcement === 'advisory' ? ' (advisory: not enforced)' : ''));
   lines.push('');
   const overridden = r.decision === 'OVERRIDDEN';
 

@@ -61,6 +61,11 @@ evaluator.
 - **Action: `version` defaults to `0.4.0`**, not `latest`: a qa-spine release reaches a
   workflow only when it moves to an Action tag that names it.
 
+- **One vocabulary for people: Ready to ship, Not ready, Can't tell yet, Shipped anyway.** The
+  gate summary heading (was "no blockers" / "release blocked" / "cannot tell — evidence is
+  missing") and the brief headline (was "Cleared to ship" / "Not ready to ship") now use these
+  words, from one table (`src/words.ts`) with a plain sentence per reason code. The JSON codes
+  are unchanged. A ship recorded with an override before 0.4 reads as Shipped anyway.
 - **MCP tools say what they return, and refusals say how to fix them.** Every tool description
   says what comes back; every input has a description with an example. `release_submit` refused
   for missing evidence now names each open reason and the action that closes it (from one table,

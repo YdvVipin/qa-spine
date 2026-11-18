@@ -98,7 +98,7 @@ test('a live question blocks and is named in the output', () => {
   withStore(({ db }) => {
     const { code, out } = gate(['--changed', 'PROJ-42'], db);
     assert.equal(code, 1, 'a live signal must fail the check');
-    assert.match(out, /release blocked/);
+    assert.match(out, /Not ready/);
     assert.match(out, /What happens when notification delivery fails\?/);
   });
 });
@@ -107,7 +107,7 @@ test('a requirement with nothing open passes', () => {
   withStore(({ db }) => {
     const { code, out } = gate(['--changed', 'PROJ-7'], db);
     assert.equal(code, 0);
-    assert.match(out, /no blockers/);
+    assert.match(out, /Ready to ship/);
   });
 });
 
@@ -310,7 +310,7 @@ test('--brief writes a readable page for the verdict it just recorded', () => {
     );
     assert.ok(existsSync(briefPath));
     const html = readFileSync(briefPath, 'utf8');
-    assert.match(html, /Not ready to ship/);
+    assert.match(html, /<h1>Not ready<\/h1>/);
     assert.match(html, /What happens when notification delivery fails\?/);
     assert.match(html, /Recorded automatically by qa-spine gate/);
   });
@@ -337,7 +337,7 @@ test('a failing test on a changed requirement blocks and is named', () => {
     addTest(store, [{ status: 'failed', message: 'button stayed enabled' }]);
     const { code, out } = gate(['--changed', 'PROJ-7'], db);
     assert.equal(code, 1);
-    assert.match(out, /release blocked/);
+    assert.match(out, /Not ready/);
     assert.match(out, /1 failing test on areas this change touches/);
     assert.match(out, /button disables/);
     assert.match(out, /button stayed enabled/);
@@ -370,7 +370,7 @@ test('a flaky test whose latest run passed does not block but is listed', () => 
     addTest(store, [{ status: 'failed', commit: 'c1' }, { status: 'passed', commit: 'c1' }]);
     const { code, out } = gate(['--changed', 'PROJ-7'], db);
     assert.equal(code, 0);
-    assert.match(out, /no blockers/);
+    assert.match(out, /Ready to ship/);
     assert.match(out, /1 flaky test/);
     const r = JSON.parse(gate(['--changed', 'PROJ-7', '--json'], db).out);
     assert.deepEqual(r.flakyTests.map((t: any) => t.name), ['button disables']);

@@ -68,15 +68,15 @@ test('a hold renders the decision and the reason verbatim', () => {
   const { verdict } = seedBrief(store);
   const html = renderBrief(store, verdict.id);
 
-  assert.match(html, /Not ready to ship/);
+  assert.match(html, /<h1>Not ready<\/h1>/);
   assert.match(html, /One question about customer notification was never answered\./);
-  assert.doesNotMatch(html, /Cleared to ship/);
+  assert.doesNotMatch(html, /<h1>Ready to ship<\/h1>/);
 });
 
 test('a ship renders the cleared decision', () => {
   const store = new TraceStore(':memory:');
   const { verdict } = seedBrief(store, { verdict: 'ship', reason: 'Nothing outstanding.' });
-  assert.match(renderBrief(store, verdict.id), /Cleared to ship/);
+  assert.match(renderBrief(store, verdict.id), /<h1>Ready to ship<\/h1>/);
 });
 
 test('a cited question appears with its date, in the past tense', () => {
@@ -207,7 +207,7 @@ test('a citation that no longer resolves does not prevent rendering', () => {
   });
 
   const html = renderBrief(store, orphaned.id);
-  assert.match(html, /Cleared to ship/);
+  assert.match(html, /<h1>Shipped anyway<\/h1>/, 'an override recorded before 0.4 still reads as shipped anyway');
   assert.match(html, /accepted/);
   assert.doesNotMatch(html, /Questions that were still open/);
 });

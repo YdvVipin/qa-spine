@@ -209,7 +209,7 @@ test("the brief reads as a hold and names the open question", () => {
   withDemo((db, brief) => {
     runDemo(db, brief);
     const html = readFileSync(brief, 'utf8');
-    assert.match(html, /Not ready to ship/);
+    assert.match(html, /<h1>Not ready<\/h1>/);
     assert.match(html, /What happens when notification delivery fails\?/);
   });
 });
