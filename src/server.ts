@@ -2,7 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -410,7 +410,7 @@ export function reviewExport(store: TraceStore): string {
 function requestedPort(args: string[]): string | undefined {
   const { values, positionals } = parseArgs({
     args,
-    options: { port: { type: 'string' } },
+    options: { port: { type: 'string' }, 'no-open': { type: 'boolean' } },
     allowPositionals: true,
   });
   const raw = values.port ?? positionals[0] ?? process.env.QA_SPINE_PORT;
@@ -515,6 +515,18 @@ export function mcpCommand(packageRoot: string, version: string): string {
   return /[\\/]_npx[\\/]/.test(packageRoot)
     ? `claude mcp add qa-spine -- npx -y qa-spine@${version}`
     : `claude mcp add qa-spine -- node ${join(packageRoot, 'dist', 'server.js')}`;
+}
+
+/** The demo opens a browser only for a person at a terminal: never in CI, a pipe, or with --no-open. */
+export function shouldOpenBrowser(o: { isTTY: boolean; env: NodeJS.ProcessEnv; args: string[] }): boolean {
+  return o.isTTY && !o.env.CI && !o.args.includes('--no-open');
+}
+
+/** The platform's own "open this URL" command. */
+export function openCommand(platform: NodeJS.Platform, url: string): [string, string[]] {
+  if (platform === 'darwin') return ['open', [url]];
+  if (platform === 'win32') return ['cmd', ['/c', 'start', '', url]];
+  return ['xdg-open', [url]];
 }
 
 /** A write `init` could not make, as one sentence with the folder and what to do. */
@@ -1110,10 +1122,20 @@ Next, to reach a first release decision:
       process.once('SIGINT', stop);
       process.once('SIGTERM', stop);
 
+      const base = `http://127.0.0.1:${listeningOn(server)}`;
+      const { DEMO_RELEASES } = await import('./demo.ts');
+      const link = (r: (typeof DEMO_RELEASES)[number]) => `${base}/?release=${encodeURIComponent(r.release)}&changed=${r.changed.join(',')}`;
       console.log(`store  ${demoDb}`);
       console.log(`brief  ${briefPath}`);
-      console.log(`\nqa-spine demo → http://127.0.0.1:${listeningOn(server)}`);
+      console.log(`\nqa-spine demo → ${base}`);
+      console.log('\nThe Release page, one example of each kind:');
+      for (const r of DEMO_RELEASES) console.log(`  ${r.label.padEnd(15)} ${link(r)}`);
       console.log('\nA throwaway store; your own data is untouched. Ctrl-C stops the demo and deletes it.');
+      // The Not ready example: the one where every decision, Ship anyway included, can be tried.
+      if (shouldOpenBrowser({ isTTY: !!process.stdout.isTTY, env: process.env, args: process.argv.slice(3) })) {
+        const [cmd, args] = openCommand(process.platform, link(DEMO_RELEASES[1]));
+        spawn(cmd, args, { detached: true, stdio: 'ignore' }).on('error', () => {}).unref();
+      }
       break;
     }
 

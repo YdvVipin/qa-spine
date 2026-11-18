@@ -96,3 +96,20 @@ test('a busy port the user chose gets one sentence and exit 1, not a stack trace
     held!.close();
   }
 });
+
+test('the demo prints a link to each example release, and each opens with its decision', { skip: process.platform === 'win32' }, async () => {
+  const demo = await startDemo(['--port', '0'], env());
+  try {
+    for (let i = 0; i < 50 && !demo.out().includes("Can't tell yet"); i++) await new Promise((r) => setTimeout(r, 100));
+    const out = demo.out();
+    const links = [...out.matchAll(/^\s+(Ready to ship|Not ready|Can't tell yet)\s+(http:\/\/127\.0\.0\.1:\d+\/\?release=\S+)$/gm)].map((m) => [m[1], m[2]]);
+    assert.deepEqual(links.map((l) => l[0]), ['Ready to ship', 'Not ready', "Can't tell yet"], out);
+    for (const [label, url] of links) {
+      const api = url.replace('/?', '/api/release?');
+      assert.equal((await (await fetch(api)).json()).headline, label);
+      assert.equal((await fetch(url)).status, 200);
+    }
+  } finally {
+    demo.child.kill('SIGKILL');
+  }
+});

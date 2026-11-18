@@ -2,6 +2,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { TraceStore } from './trace/store.ts';
 import { recordVerdict } from './release.ts';
 import { renderBrief } from './brief.ts';
+import { ingestJunit } from './junit.ts';
 
 /**
  * One worked example: a requirement, two questions raised against it, one answered
@@ -103,18 +104,52 @@ export function seedDemo(store: TraceStore): { verdictId: string } {
 }
 
 /**
+ * Three example releases for the Release page, one of each kind a release manager meets. All
+ * invented: a made-up shop, PROJ keys, and personas from the product's own user flow.
+ */
+export const DEMO_RELEASES = [
+  { label: 'Ready to ship', release: 'shop-2.1', changed: ['PROJ-101'] },
+  { label: 'Not ready', release: 'shop-2.2', changed: ['PROJ-101', 'PROJ-102'] },
+  { label: "Can't tell yet", release: 'shop-2.3', changed: ['PROJ-101', 'PROJ-103', 'PROJ-104'] },
+];
+
+function seedReleases(store: TraceStore): void {
+  const story = (key: string, text: string) => store.record({ type: 'requirement', sourceRef: key, content: { text }, provenance: HUMAN });
+  story('PROJ-101', 'A shopper can remove a saved card.');
+  const refund = story('PROJ-102', 'A refund reaches the card within one working day.');
+  const email = story('PROJ-103', 'Order emails show the delivery date.');
+  story('PROJ-104', 'A gift card can pay for part of an order.');
+  // An automated pass, the way CI delivers it.
+  ingestJunit(store, {
+    reports: [{ file: 'checkout.xml', xml: '<testsuite><testcase classname="wallet" name="PROJ-101 removing a saved card"/></testsuite>' }],
+    runRef: 'ci/run/481',
+  });
+  // A manual failure, with the bug the tester filed.
+  const refundTest = store.record({ type: 'test_case', content: { name: 'refund reaches the card next working day' }, provenance: HUMAN, links: [{ to: refund.id, relation: 'covers' }] });
+  store.record({
+    type: 'test_run',
+    content: { status: 'failed', message: 'The refund arrived after three working days.', bug_key: 'SHOP-91' },
+    provenance: { ...HUMAN, approvedBy: 'priya' },
+    links: [{ to: refundTest.id, relation: 'verifies' }],
+  });
+  // A test nobody has run yet; PROJ-104 has no test at all.
+  store.record({ type: 'test_case', content: { name: 'order email shows the delivery date' }, provenance: HUMAN, links: [{ to: email.id, relation: 'covers' }] });
+}
+
+/**
  * Seed a throwaway store and render its brief.
  *
  * The database is deleted first: the ledger is append-only, so re-running would
  * otherwise stack a second copy of the arc that nothing could remove.
  *
- * ponytail: one hardcoded arc, no flags to vary it and no way to seed a clean ship.
- * Fine for a first-run demo; a second scenario becomes a flag when somebody asks.
+ * The worked example (one question, one failing test, a hold) plus the three releases in
+ * DEMO_RELEASES.
  */
 export function runDemo(dbPath: string, briefPath: string): { store: TraceStore; verdictId: string } {
   rmSync(dbPath, { force: true });
   const store = new TraceStore(dbPath);
   const { verdictId } = seedDemo(store);
+  seedReleases(store);
   writeFileSync(briefPath, renderBrief(store, verdictId));
   return { store, verdictId };
 }

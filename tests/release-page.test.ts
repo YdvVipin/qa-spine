@@ -91,6 +91,13 @@ test('only the decisions the release allows are offered', () => {
   assert.deepEqual(offered(notReady), ['hold', 'ship_anyway']);
   assert.deepEqual(offered(cantTell), ['hold']);
   assert.match(textOf(renderRelease(cantTell)), /cannot be shipped until every story has evidence/);
+  assert.doesNotMatch(textOf(renderRelease(cantTell)), /Ship anyway/, 'not mentioned where it is not offered');
+});
+
+test('a refusal and a recorded decision use separate lines: an alert for one, a status for the other', () => {
+  const html = renderRelease(states().ready);
+  assert.match(html, /<p class="error" role="alert"><\/p>/);
+  assert.match(html, /<p class="done" role="status"><\/p>/);
 });
 
 test('the page says a typed name is not a sign-in, and links to the evidence', () => {

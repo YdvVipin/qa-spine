@@ -84,6 +84,11 @@ try {
       if (!page) await new Promise((r) => setTimeout(r, 100));
     }
     assert.match(page ?? '', /<html/i, 'the Inspector did not serve its page');
+    // The Release page, from the packed files: its script, and a decision on this store's story.
+    const js = await fetch(`http://127.0.0.1:${port}/release.js`);
+    assert.equal(js.status, 200, 'release.js is served');
+    const release = await (await fetch(`http://127.0.0.1:${port}/api/release?release=smoke-1&changed=PROJ-1`)).json();
+    assert.equal(release.headline, 'Ready to ship', JSON.stringify(release));
   } finally {
     // Wait for it to go: on Windows a live process holding the folder as its cwd blocks the
     // cleanup below with EBUSY.

@@ -199,7 +199,8 @@ function withDemo(fn: (db: string, brief: string) => void) {
 test('runDemo seeds the whole arc and writes the brief', () => {
   withDemo((db, brief) => {
     const { store, verdictId } = runDemo(db, brief);
-    assert.equal(store.list(undefined, 1e9).length, 7);
+    // The worked example is 7 artifacts; the three Release page examples add 9.
+    assert.equal(store.list(undefined, 1e9).length, 16);
     assert.ok(verdictId.startsWith('verdict_'));
     assert.ok(existsSync(brief));
   });
@@ -217,7 +218,8 @@ test("the brief reads as a hold and names the open question", () => {
 test('the seeded graph is connected — the verdict is reachable from the requirement', () => {
   withDemo((db, brief) => {
     const { store, verdictId } = runDemo(db, brief);
-    const requirement = store.list('requirement', 10)[0];
+    // The worked example's story; the Release page examples are separate stories.
+    const requirement = store.bySourceRef(['PROJ-42']).find((a) => a.type === 'requirement')!;
     const chain = store.chain(requirement.id);
     assert.ok(chain, 'requirement must have a chain');
     assert.equal(chain.nodes.length, 7, 'every artifact should be reachable, not seven islands');
@@ -256,6 +258,6 @@ test('running the demo twice does not stack a second copy', () => {
   withDemo((db, brief) => {
     runDemo(db, brief);
     const { store } = runDemo(db, brief);
-    assert.equal(store.list(undefined, 1e9).length, 7, 'the ledger is append-only — start clean');
+    assert.equal(store.list(undefined, 1e9).length, 16, 'the ledger is append-only — start clean');
   });
 });

@@ -45,7 +45,7 @@ function decide(view) {
   <h2>Decide</h2>
   ${cantShip}
   <label>Your name <input name="name" autocomplete="name" required></label>
-  <label>Reason <span class="hint">(optional for Hold; 20 characters or more for Ship anyway)</span>
+  <label>Reason <span class="hint">(optional for Hold${a.shipAnyway ? '; 20 characters or more for Ship anyway' : ''})</span>
     <textarea name="reason" rows="2"></textarea></label>
   ${a.shipAnyway ? '<label>Jira bug for each failure <input name="defects" placeholder="ABC-123, ABC-124"></label>' : ''}
   <div class="buttons">
@@ -59,6 +59,7 @@ function decide(view) {
     <button type="button" data-cancel>Cancel</button>
   </div>
   <p class="error" role="alert"></p>
+  <p class="done" role="status"></p>
   <p class="claimed">Your name is recorded as you type it; this page has no sign-in.</p>
 </section>`;
 }
@@ -118,7 +119,7 @@ export async function mount(root, params) {
   };
   const show = (view, note) => {
     root.innerHTML = renderRelease(view);
-    if (note) root.querySelector('.error').textContent = note;
+    if (note) root.querySelector('.done').textContent = note;
     const field = (n) => root.querySelector(`[name="${n}"]`);
     const confirm = root.querySelector('.confirm');
     const form = () => ({
