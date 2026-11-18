@@ -872,11 +872,23 @@ if (invokedAsScript()) {
             commit: { type: 'string' },
             environment: { type: 'string' },
             'ticket-pattern': { type: 'string' },
+            map: { type: 'string' },
           },
           allowPositionals: true,
         });
         if (!positionals.length) {
-          throw new Error('usage: qa-spine ingest-junit <report.xml>... [--run-ref URL] [--commit SHA] [--environment NAME]');
+          throw new Error('usage: qa-spine ingest-junit <report.xml>... [--run-ref URL] [--commit SHA] [--environment NAME] [--map tests.json]');
+        }
+        const { ingestJunit, parseTestMap } = await import('./junit.ts');
+        let map;
+        if (values.map) {
+          let json: string;
+          try {
+            json = readFileSync(values.map, 'utf8');
+          } catch (err) {
+            throw new Error(`cannot read ${values.map}: ${err instanceof Error ? err.message : err}`);
+          }
+          map = parseTestMap(json, values.map);
         }
 
         const reports = positionals.map((file) => {
@@ -898,13 +910,13 @@ if (invokedAsScript()) {
           }
         }
 
-        const { ingestJunit } = await import('./junit.ts');
         const store = new TraceStore(path);
         const result = ingestJunit(store, {
           reports,
           runRef: values['run-ref'],
           commit,
           environment: values.environment,
+          map,
           ticketPattern: values['ticket-pattern'],
           toolVersion: VERSION,
         });

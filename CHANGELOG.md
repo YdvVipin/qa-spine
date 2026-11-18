@@ -45,6 +45,9 @@ evaluator.
   `release_submit`, the Action): only runs on that build count.
 - `gate --advisory` (Action input `advisory`): exit 0 whatever the decision; the decision
   itself still says HOLD or UNKNOWN.
+- `ingest-junit --map tests.json` links tests whose names carry no ticket key: test name (or
+  `classname::name`) to one key or a list, added to any key the name has. Unmatched entries are
+  reported as `unusedMapEntries`; a malformed map writes nothing.
 - `ingest-junit --environment NAME`. The same `--run-ref` delivering the same results again
   records nothing new; the same ref with a different outcome is refused.
 - `gate --text "<PR title>"` (Action input `text`): assesses the ticket keys in free text,

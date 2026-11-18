@@ -496,8 +496,20 @@ npx qa-spine ingest-junit reports/*.xml --run-ref "$CI_RUN_URL"
 `ingest-junit` records JUnit XML — the format nearly every test runner can emit — as test cases
 and runs. A test is tied to a requirement by a ticket key it carries: in its name, its class
 name, or a `<property name="requirement" value="PROJ-42"/>` (what pytest's `record_property`
-emits). A test with no key is still recorded; it simply cannot block anything. A key with no
-matching requirement is reported as `uncovered`.
+emits). A test with no key is still recorded (counted as `unkeyed`), but it covers no story, so
+a story whose tests all lack keys reads as having no test: `UNKNOWN`. A key with no matching
+requirement is reported as `uncovered`.
+
+When a suite's test names carry no key, give `--map tests.json`, an object from test name (or
+`classname::name`, when two classes share a test name) to one key or a list:
+
+```json
+{ "refund email is sent": "PROJ-42", "refunds::amount is right": ["PROJ-42", "PROJ-43"] }
+```
+
+Mapped keys are added to any the name carries. A map entry that matches no test in the reports
+is listed as `unusedMapEntries` (usually a renamed test), and a map that is not valid JSON, or
+maps a test to anything but keys, stops the ingest before anything is written.
 
 On the gate, a covering test whose **latest** run failed or errored blocks, exactly like an
 unanswered question, and needs the same named override to ship over. A later passing run
