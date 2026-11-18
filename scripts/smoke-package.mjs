@@ -42,7 +42,7 @@ try {
 
   step('version and packaged assets');
   assert.equal(qs(['--version']).trim(), pkg.version);
-  for (const f of ['rubrics/ambiguity.json', 'locales/en-US.json', 'dist/inspector/ui/index.html', 'dist/inspector/ui/app.js']) {
+  for (const f of ['rubrics/ambiguity.json', 'locales/en-US.json', 'dist/inspector/ui/index.html', 'dist/inspector/ui/app.js', 'dist/inspector/ui/release.js', 'dist/cli.js']) {
     assert.ok(existsSync(join(pkgDir, f)), `the package is missing ${f}`);
   }
 

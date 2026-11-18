@@ -215,3 +215,31 @@ tr.run-skipped td { color: var(--dim); }
 .node.run-flaky { border-left-color: var(--warn); }
 .node.run-passed { border-left-color: var(--good); }
 .node .flag.flag-warn { color: var(--warn); }
+
+/* --- release page: for a release manager; the sentence carries the meaning, colour backs it --- */
+.release { max-width: 860px; margin: 0 auto; }
+.release .release-id { color: var(--dim); margin: 0; }
+.release .headline { font-size: 1.9rem; margin: 0.2rem 0 0.8rem; padding-left: 0.8rem; border-left: 6px solid var(--line); }
+.release.tone-ready .headline { border-color: var(--good); color: var(--good); }
+.release.tone-not-ready .headline { border-color: var(--bad); color: var(--bad); }
+.release.tone-cant-tell .headline { border-color: var(--warn); color: var(--warn); }
+.release.tone-shipped-anyway .headline { border-color: var(--ai); color: var(--ai); }
+.release .today { color: var(--dim); }
+.release .decided { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem 0.9rem; }
+.release .list h2, .release .decide h2 { font-size: 1rem; margin: 1.4rem 0 0.4rem; }
+.release .list ul { margin: 0; padding-left: 1.1rem; line-height: 1.7; }
+.release .list .title, .release .empty, .release .hint, .release .claimed { color: var(--dim); }
+.release .decide { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 1rem 0.8rem; margin-top: 1.4rem; }
+.release .decide label { display: block; margin: 0.6rem 0; }
+.release .decide input, .release .decide textarea {
+  display: block; width: 100%; box-sizing: border-box; margin-top: 0.25rem;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 0.45rem 0.55rem; font: inherit;
+}
+.release .decide button { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 0.5rem 1rem; margin-right: 0.4rem; cursor: pointer; font: inherit; }
+.release .decide button.go { border-color: var(--good); color: var(--good); }
+.release .decide button.risk { border-color: var(--bad); color: var(--bad); }
+.release .decide button:focus-visible, .release .decide input:focus-visible, .release .decide textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.release .confirm { margin-top: 0.8rem; }
+.release .error { color: var(--bad); min-height: 1.2em; }
+.release .evidence { margin-top: 1.6rem; color: var(--dim); }
+@media (max-width: 600px) { .release .headline { font-size: 1.45rem; } }

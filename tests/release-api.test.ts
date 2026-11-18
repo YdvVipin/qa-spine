@@ -137,3 +137,14 @@ test('a reason with internal ids in it is refused in plain words', async (t) => 
   assert.equal(r.status, 400);
   assert.match((await r.json()).error, /plain language/);
 });
+
+test('the Inspector serves the Release page: index.html at /?release=, and release.js as JavaScript', async (t) => {
+  const get = await serve(seedReleases(), t);
+  const page = await get('/?release=shop-1.4&changed=QA-1');
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /<script type="module" src="app\.js">/);
+  const js = await get('/release.js');
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get('content-type') ?? '', /javascript/);
+  assert.match(await js.text(), /export function renderRelease/);
+});

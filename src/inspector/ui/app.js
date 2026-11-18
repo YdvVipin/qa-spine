@@ -676,7 +676,14 @@ function route() {
 // Cross-fade view swaps with the native View Transitions API. route() is async for the
 // detail and chain views, so the old view holds until the fetch resolves and then fades.
 const still = matchMedia('(prefers-reduced-motion: reduce)');
-addEventListener('hashchange', () =>
-  document.startViewTransition && !still.matches ? document.startViewTransition(route) : route(),
-);
-route();
+// A link with ?release= opens the Release page, for the release manager; the engineer views
+// stay one "Evidence" click away. Without it, the Inspector is what it always was.
+const releaseParams = new URLSearchParams(location.search);
+if (releaseParams.get('release')) {
+  import('./release.js').then((m) => m.mount(view, releaseParams));
+} else {
+  addEventListener('hashchange', () =>
+    document.startViewTransition && !still.matches ? document.startViewTransition(route) : route(),
+  );
+  route();
+}
