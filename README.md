@@ -521,6 +521,10 @@ clears it; nothing is superseded, the newer fact wins. **Only a pass clears a fa
 skip after a failure leaves the failure deciding, and a test whose latest run was skipped is
 `UNKNOWN`, not clear. A covering test that never ran is `UNKNOWN` too.
 
+Many records at once: `qa-spine record --batch` reads one JSON object per line and writes them
+in one process and one transaction, returning `{"ids": [...]}` in order. A bad line names its
+line number and nothing from the batch is written.
+
 A failed run can carry the bug that tracks it: `content.defect = {"key": "SHOP-91", "url":
 "https://…", "state": "open"}`, checked when written (a Jira-shaped key; an http(s) link). The
 brief and the Release page show each failure with its bug. A `bug_key` string, the form RatifyQA

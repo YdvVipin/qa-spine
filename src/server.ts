@@ -450,6 +450,7 @@ usage: qa-spine [subcommand]
   demo [--port N]         seed a throwaway store and open the Inspector
   inspect [--port N]      browse the trace store in the Inspector
   record                  append an artifact (JSON payload on stdin)
+                          (--batch: one JSON object per line, all or nothing)
   brief <verdictId>       render a release verdict as self-contained HTML
   audit-requirement <id>  load a requirement plus the ambiguity rubric
   audit-submit            record audit findings (JSON payload on stdin)
@@ -666,8 +667,35 @@ export async function main(): Promise<void> {
         // ponytail: caller holding stdin open without closing still hangs indefinitely; upgrade path is read timeout
         const chunks: Buffer[] = [];
         for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+        const text = Buffer.concat(chunks).toString('utf8');
+        if (process.argv.slice(3).includes('--batch')) {
+          // One JSON object per line, one process, one transaction: every line is checked as a
+          // single record would be, and any failure names its line and writes nothing.
+          const lines = text.split('\n').map((l, i) => ({ n: i + 1, l: l.trim() })).filter((x) => x.l);
+          if (!lines.length) throw new Error('record --batch read no lines: give one JSON object per line');
+          const payloads = lines.map(({ n, l }) => {
+            try {
+              return { n, p: JSON.parse(l) };
+            } catch {
+              throw new Error(`line ${n}: not valid JSON`);
+            }
+          });
+          const store = new TraceStore(path);
+          const ids = store.transaction(() =>
+            payloads.map(({ n, p }) => {
+              try {
+                assertRawRecordAllowed(store, p);
+                return recordRequirement(store, p).id;
+              } catch (err) {
+                throw new Error(`line ${n}: ${explainWriteError(err)}`);
+              }
+            }),
+          );
+          console.log(JSON.stringify({ ids }));
+          break;
+        }
         const store = new TraceStore(path);
-        const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const payload = JSON.parse(text);
         assertRawRecordAllowed(store, payload);
         console.log(JSON.stringify(recordRequirement(store, payload)));
       } catch (err) {

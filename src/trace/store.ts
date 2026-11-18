@@ -340,8 +340,28 @@ export class TraceStore {
    * then writes cannot wait for another writer — SQLite fails the upgrade at once rather than
    * risk a deadlock, and busy_timeout never applies.
    */
+  /**
+   * All of fn or none of it. Nests: inside another transaction it is a savepoint, so a caller
+   * that already holds one (record --batch) can use helpers that open their own.
+   */
   transaction<T>(fn: () => T): T {
+    if (this.depth > 0) {
+      const name = `nested_${this.depth}`;
+      this.db.exec(`SAVEPOINT ${name}`);
+      this.depth++;
+      try {
+        const result = fn();
+        this.db.exec(`RELEASE ${name}`);
+        return result;
+      } catch (err) {
+        this.db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`);
+        throw err;
+      } finally {
+        this.depth--;
+      }
+    }
     this.db.exec('BEGIN IMMEDIATE');
+    this.depth++;
     try {
       const result = fn();
       this.db.exec('COMMIT');
@@ -349,8 +369,11 @@ export class TraceStore {
     } catch (err) {
       this.db.exec('ROLLBACK');
       throw err;
+    } finally {
+      this.depth--;
     }
   }
+  private depth = 0;
 
   link(from: string, to: string, relation: Relation): Edge {
     return this.insertEdge(from, to, relation, new Date().toISOString());

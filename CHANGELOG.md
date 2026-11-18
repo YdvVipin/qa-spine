@@ -55,6 +55,10 @@ evaluator.
 - **A failed run can carry its bug** as `content.defect: {key, url?, state?}`, checked on write
   through every path (C1). The brief and the Release page list each failure with it; the older
   free-text `bug_key` is still read.
+- **`record --batch`**: one JSON object per line, one process, one transaction (E5); any bad line
+  names its number and nothing is written. Automated runs recorded with `producer: "tool"` read
+  as automated on the Release page (E3). A store kept locked past the 5-second wait now says it
+  is busy and that nothing was written (E1).
 - Overrides carry their Jira bugs: `override.defects` on `release_submit`, `gate --defect KEY`.
 
 - `gate --commit SHA` / `--environment NAME` (and the same on `assess_release_risk`,
