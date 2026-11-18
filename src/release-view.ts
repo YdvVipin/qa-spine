@@ -79,8 +79,12 @@ export function releaseView(store: TraceStore, input: { release: string } & Part
   const req = (id: string) => store.get(id);
   const storyOf = (id: string) => req(id)?.sourceRef ?? id;
   const onBuild = scope.commit || scope.environment ? ' on this build' : '';
+  // Who stands behind a result: the person named, else qa-spine's ingest ("test report"), else
+  // the tool that ran it. A tool is not a person: E3 keeps automated runs from reading as typed.
+  const automated = (run: Artifact | undefined) =>
+    run?.provenance.producer === 'tool' && run.provenance.tool !== INGEST_TOOL ? `automated run (${run.provenance.tool})` : null;
   const reporter = (run: Artifact | undefined) =>
-    run?.provenance.approvedBy?.trim() || (run?.provenance.tool === INGEST_TOOL ? 'test report' : null);
+    run?.provenance.approvedBy?.trim() || (run?.provenance.tool === INGEST_TOOL ? 'test report' : automated(run));
 
   const passed = g.passing.map((p) => ({ story: storyOf(p.requirementId), title: title(req(p.requirementId)), test: p.name, when: p.at, by: p.by ?? 'test report' }));
   const failed = [
@@ -115,7 +119,9 @@ export function releaseView(store: TraceStore, input: { release: string } & Part
           : t.state === 'invalid'
             ? `${t.name} has a result that could not be read`
             : t.status === 'passed'
-              ? `${t.name} passed, but nobody is named as having run it`
+              ? automated(t.testRunId ? store.get(t.testRunId) : undefined)
+                ? `${t.name} passed in an ${automated(store.get(t.testRunId!))}, but no test report or named person backs it`
+                : `${t.name} passed, but nobody is named as having run it`
               : `${t.name} has no result${onBuild} yet`,
     })),
     ...g.untested.map((u) => ({ story: u.sourceRef ?? storyOf(u.requirementId), title: title(req(u.requirementId)), what: 'No test covers this story' })),
