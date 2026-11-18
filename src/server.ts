@@ -81,7 +81,8 @@ export function createServer(store: TraceStore) {
     {
       description:
         'Load a locale pack (phone and postcode formats, currency) and instructions for generating ' +
-        'test data. Makes no model call: generate the data yourself, then record it with fixtures_submit.',
+        'test data. Returns the pack and the instructions. Makes no model call: generate the data ' +
+        'yourself, then record it with fixtures_submit.',
       inputSchema: { locale: z.string().describe('e.g. en-US, en-GB, de-DE, en-IN.') },
     },
     ({ locale }) => {
@@ -100,12 +101,12 @@ export function createServer(store: TraceStore) {
         'Record generated test data for a test case or requirement. Every fixture is validated ' +
         'against `schema` (a JSON Schema subset; unsupported keywords are refused) and the ' +
         "locale's formats; one bad fixture rejects the submission. `promptVersion` is set by the " +
-        'server from the locale pack.',
+        'server from the locale pack. Returns the recorded fixture id.',
       inputSchema: {
         schema: z.record(z.string(), z.unknown()).describe('The JSON Schema every fixture must satisfy.'),
-        locale: z.string(),
+        locale: z.string().describe('The pack the data follows, as given to fixtures_request, e.g. en-GB.'),
         fixtures: z.array(z.unknown()).describe('The generated records.'),
-        forId: z.string().describe('The test case or requirement the data is for.'),
+        forId: z.string().describe('The artifact id of the test case or requirement the data is for, e.g. test_case_1a2b3c4d.'),
         provenance: ProvenanceInput.describe('Who generated these. AI must give `model`.'),
       },
     },
@@ -121,7 +122,9 @@ export function createServer(store: TraceStore) {
   server.registerTool(
     'health',
     {
-      description: 'Check that the qa-spine server is running and report trace store status.',
+      description:
+        'Check that the qa-spine server is running. Returns `ok`, the qa-spine `version`, the store ' +
+        'path (`db`) and how many artifacts it holds.',
       inputSchema: {},
     },
     () => json({ ok: true, version: VERSION, db: dbPath(), artifacts: store.list(undefined, 1e9).length }),
@@ -134,10 +137,12 @@ export function createServer(store: TraceStore) {
         'Append an artifact to the trace store, optionally linking it to existing artifacts. ' +
         'The store is append-only: to correct a requirement, record it again with the same sourceRef. ' +
         'Withdrawing something recorded by mistake is for a person to do, with `qa-spine retract`; ' +
-        'there is no tool for it. A test_run that did not fail clears a failure only when ' +
-        '`provenance.approvedBy` names who vouches for it.',
+        'there is no tool for it. A test_run `status` must be one of passed, failed, error, skipped, ' +
+        'blocked, not_run, cancelled, unknown (`completed` is refused); a pass written here counts only ' +
+        'when `provenance.approvedBy` names who vouches for it. Automated results belong in ' +
+        '`qa-spine ingest-junit`. Returns the recorded artifact, with its id.',
       inputSchema: {
-        type: ArtifactType,
+        type: ArtifactType.describe('What is being recorded: requirement, test_case, test_run, and so on.'),
         sourceRef: z
           .string()
           .optional()
@@ -168,9 +173,9 @@ export function createServer(store: TraceStore) {
       description:
         'Given an artifact ID, return the full upstream and downstream chain with provenance ' +
         'intact — e.g. from a release verdict back to the requirement finding that predicted it. ' +
-        'Omit the ID to list recent artifacts.',
+        'Omit the ID to list recent artifacts. Returns the chain, or `{artifacts: [...]}` for a listing.',
       inputSchema: {
-        artifactId: z.string().optional(),
+        artifactId: z.string().optional().describe('The artifact to start from, e.g. verdict_1a2b3c4d. Omit to list.'),
         type: ArtifactType.optional().describe('Filter the listing when no artifactId is given.'),
       },
     },
@@ -189,7 +194,7 @@ export function createServer(store: TraceStore) {
         'This tool makes no model call: reason over what it returns, then record what you find ' +
         'with `audit_submit`. Emit questions for a human, never a rewritten requirement.',
       inputSchema: {
-        requirementId: z.string().describe('The artifact id of the requirement to audit.'),
+        requirementId: z.string().describe('The artifact id of the requirement to audit, e.g. requirement_1a2b3c4d.'),
       },
     },
     ({ requirementId }) => {
@@ -210,9 +215,10 @@ export function createServer(store: TraceStore) {
         'no internal identifiers or system terminology; if any finding fails any check the whole ' +
         'submission is rejected and nothing is written. `promptVersion` is set by the server from ' +
         'the rubric version, not by the caller. Submit an empty list when no rule fires: that ' +
-        'records a clean audit, which is what clears a requirement edited since it was audited.',
+        'records a clean audit, which is what clears a requirement edited since it was audited. ' +
+        'Returns `{recorded: [ids]}`; next, a person answers each question (audit_open, audit_answer).',
       inputSchema: {
-        requirementId: z.string(),
+        requirementId: z.string().describe('The requirement the findings are about, e.g. requirement_1a2b3c4d.'),
         findings: z.array(AuditFinding).describe('Empty when no rule fires: that records a clean audit.'),
         provenance: ProvenanceInput.describe('Who produced these. AI must give `model`.'),
       },
@@ -232,9 +238,10 @@ export function createServer(store: TraceStore) {
       description:
         'List ambiguity questions still waiting on an answer. Each carries the rule it came ' +
         'from, the quoted span, and the requirement text needed to answer it, so no second ' +
-        'call is required. Omit requirementId for everything outstanding.',
+        'call is required. Omit requirementId for everything outstanding. Returns the list; answer ' +
+        'each with audit_answer.',
       inputSchema: {
-        requirementId: z.string().optional().describe('Limit to one requirement.'),
+        requirementId: z.string().optional().describe('Limit to one requirement, e.g. requirement_1a2b3c4d.'),
       },
     },
     ({ requirementId }) => {
@@ -253,10 +260,10 @@ export function createServer(store: TraceStore) {
         'Answer an open ambiguity question. The answer supersedes the finding, which retires ' +
         'it. Rejects a blank answer, an id that is not a finding, and a finding something has ' +
         'already resolved. Your provenance is recorded as given and is not rewritten: an ' +
-        'answer produced by AI stays visibly an AI answer.',
+        'answer produced by AI stays visibly an AI answer. Returns the recorded answer.',
       inputSchema: {
-        findingId: z.string().describe('The finding whose question you are answering.'),
-        answer: z.string().describe('The answer, in full. Blank answers are rejected.'),
+        findingId: z.string().describe('The finding whose question you are answering, e.g. finding_1a2b3c4d.'),
+        answer: z.string().describe('The answer, in full, e.g. "Within three business days." Blank answers are rejected.'),
         provenance: ProvenanceInput.describe(
           'Who is answering. AI must give `model` and `promptVersion`.',
         ),
@@ -275,14 +282,13 @@ export function createServer(store: TraceStore) {
     'assess_release_risk',
     {
       description:
-        'Given the areas a release touches, return every unresolved requirement-stage finding ' +
-        'and every covering test whose latest run failed on those areas, any flaky tests there, ' +
-        '(a test case a newer one supersedes is judged by its replacement; a pass recorded by a ' +
-        'human does not clear an earlier failure without a named override), ' +
-        'plus the surrounding artifacts as unscored evidence. Makes no model ' +
-        'call: reason over what it returns, then record your brief with `release_submit`. ' +
-        '`decision` is SHIP, HOLD (a known blocker) or UNKNOWN (evidence missing: no matching ' +
-        'requirement, no test, or a test with no run that counts), with `reasons`. Only SHIP, or a ' +
+        'Assess the areas a release touches. Returns `decision` (SHIP; HOLD, a known blocker; or ' +
+        'UNKNOWN, evidence missing) with `reasons` (UNANSWERED_FINDING, FAILED_TEST, SCOPE_UNRESOLVED, ' +
+        'NO_TEST, NO_REQUIRED_RUN, SKIPPED_REQUIRED_TEST, INVALID_STATUS, STALE_AUDIT), every ' +
+        'unresolved finding and failing covering test on those areas, flaky tests, and the ' +
+        'surrounding artifacts as unscored evidence. A test case a newer one supersedes is judged by ' +
+        'its replacement; a pass written by hand counts only with a person named in approvedBy. Makes ' +
+        'no model call: reason over it, then record your brief with `release_submit`. Only SHIP, or a ' +
         'HOLD with a named override, can be recorded as ship; UNKNOWN cannot be overridden.',
       inputSchema: {
         changed: z
@@ -293,8 +299,8 @@ export function createServer(store: TraceStore) {
           .string()
           .optional()
           .describe('e.g. release/2026.7.3. Becomes the verdict sourceRef on submit.'),
-        commit: z.string().optional().describe('Only test runs on this commit count. Left out, runs on any commit do.'),
-        environment: z.string().optional().describe('Only test runs in this environment count.'),
+        commit: z.string().optional().describe('Only test runs on this commit count, e.g. 9f2c1ab. Left out, runs on any commit do.'),
+        environment: z.string().optional().describe('Only test runs in this environment count, e.g. staging.'),
       },
     },
     (args) => {
@@ -312,14 +318,15 @@ export function createServer(store: TraceStore) {
     'release_submit',
     {
       description:
-        'Record a release verdict. Signals are recomputed from `changed` and are never taken ' +
-        'from the caller, so a `ship` cannot be waved through by omitting a blocker: it is ' +
-        'rejected while any signal is live unless `override` gives a reason, which is recorded. ' +
-        'Every id in `cites` must exist. Your provenance is recorded as given.',
+        'Record a release verdict. The decision is recomputed from `changed`, never taken from the ' +
+        'caller: `ship` is refused while evidence is missing (UNKNOWN), override or not, and while a ' +
+        'blocker is live (HOLD) unless `override` gives a reason and provenance.approvedBy names who ' +
+        'accepted it. A refusal lists each open reason and how to close it. Every id in `cites` must ' +
+        'exist. Your provenance is recorded as given. Returns the recorded verdict, with its id.',
       inputSchema: {
         releaseRef: z.string().describe('e.g. release/2026.7.3.'),
-        verdict: z.enum(['ship', 'hold']),
-        reason: z.string().describe('The one-page brief. Blank is rejected.'),
+        verdict: z.enum(['ship', 'hold']).describe('What the person decided: ship or hold.'),
+        reason: z.string().describe('The one-page brief, e.g. "All changed stories pass on this build." Blank is rejected.'),
         cites: z
           .array(z.string())
           .describe('Artifact ids the brief refers to. Each becomes a derived_from edge.'),
@@ -327,8 +334,8 @@ export function createServer(store: TraceStore) {
           .array(z.string())
           .min(1)
           .describe('The same list passed to assess_release_risk. Signals are recomputed from it.'),
-        commit: z.string().optional().describe('Only test runs on this commit count. Left out, runs on any commit do.'),
-        environment: z.string().optional().describe('Only test runs in this environment count.'),
+        commit: z.string().optional().describe('Only test runs on this commit count, e.g. 9f2c1ab. Left out, runs on any commit do.'),
+        environment: z.string().optional().describe('Only test runs in this environment count, e.g. staging.'),
         override: z
           .object({
             reason: z.string().describe('Why you are shipping anyway. Blank is rejected.'),

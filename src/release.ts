@@ -1,4 +1,5 @@
 import type { TraceStore } from './trace/store.ts';
+import { HOW_TO_CLOSE } from './words.ts';
 import { RUN_STATUSES, type Artifact, type Edge, type Provenance } from './trace/schema.ts';
 
 const INSTRUCTIONS =
@@ -692,8 +693,9 @@ export function recordVerdict(
   const missing = reasons.filter((r) => !KNOWN_BLOCKERS.has(r));
   if (input.verdict === 'ship' && missing.length && (overrideReason || !signals.length)) {
     throw new Error(
-      `cannot ship: the evidence is incomplete (${missing.join(', ')}) — add tests, run them on this ` +
-        'build, or record a hold. An override accepts a known risk; it cannot vouch for what was never checked',
+      `cannot ship: the evidence is incomplete (${missing.join(', ')}). To close it: ` +
+        missing.map((r) => `${r} — ${HOW_TO_CLOSE[r]}`).join('; ') +
+        '. Or record a hold. An override accepts a known risk; it cannot vouch for what was never checked',
     );
   }
   const liveFindings = signals.flatMap((s) => (s.kind === 'unresolved_finding_on_changed_area' ? [s.detail.findingId] : []));

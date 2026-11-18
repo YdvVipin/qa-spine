@@ -61,6 +61,12 @@ evaluator.
 - **Action: `version` defaults to `0.4.0`**, not `latest`: a qa-spine release reaches a
   workflow only when it moves to an Action tag that names it.
 
+- **MCP tools say what they return, and refusals say how to fix them.** Every tool description
+  says what comes back; every input has a description with an example. `release_submit` refused
+  for missing evidence now names each open reason and the action that closes it (from one table,
+  `src/words.ts`). `assess_release_risk` no longer says a named hand-recorded pass needs an
+  override (in 0.4 a name in `approvedBy` is enough). No tool or input was renamed.
+
 ### Packaging
 
 - **The bin is `dist/cli.js`.** On a Node older than 22.13 it prints one sentence naming both
