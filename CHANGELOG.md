@@ -70,6 +70,9 @@ evaluator.
 - **`init`** prints `claude mcp add qa-spine -- npx -y qa-spine@<version>` when run through
   `npx` (the old line pointed into npm's temporary `npx` cache), says in one sentence which folder
   it could not write to and what to do, and ends with the four commands to a first decision.
+- **`demo`** keeps its store and brief in a new temporary folder per run and deletes it on Ctrl-C
+  (it used to leave fixed files in the temp folder). If port 4700 is taken it uses another free
+  port; a port you chose that is taken gets one sentence, for `inspect` too, instead of a crash.
 - **Node >= 22.13** (was >= 22.5, where `node:sqlite` needs `--experimental-sqlite` and the
   package did not start). Working from source needs 22.18, for TypeScript without a flag.
 - `scripts/smoke-package.mjs` installs a packed tarball into a fresh project under a path

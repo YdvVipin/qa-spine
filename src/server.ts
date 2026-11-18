@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs } from 'node:util';
@@ -395,14 +395,20 @@ export function reviewExport(store: TraceStore): string {
  * stack trace. `parseArgs` is what `gate` already uses, and it rejects an unknown flag
  * on its own. The bare positional stays supported: before `--port` it was the only way.
  */
-export function resolvePort(args: string[]): number {
+/** The port the user asked for, if any: --port, a bare number, or QA_SPINE_PORT. */
+function requestedPort(args: string[]): string | undefined {
   const { values, positionals } = parseArgs({
     args,
     options: { port: { type: 'string' } },
     allowPositionals: true,
   });
   const raw = values.port ?? positionals[0] ?? process.env.QA_SPINE_PORT;
-  if (raw === undefined || raw === '') return 4700;
+  return raw === '' ? undefined : raw;
+}
+
+export function resolvePort(args: string[]): number {
+  const raw = requestedPort(args);
+  if (raw === undefined) return 4700;
   // Node's own accepted range, checked here so the message names the bad value.
   if (!/^\d+$/.test(raw) || Number(raw) > 65535) {
     throw new Error(`invalid port: ${raw} (expected 0-65535)`);
@@ -498,6 +504,22 @@ function initFailure(what: string, err: unknown): string {
   return `could not write ${what} in ${process.cwd()} (${why}). Run qa-spine init from a folder you can write to, usually your project's root.`;
 }
 
+/**
+ * Starts the Inspector. A busy port the user did not choose is not their problem: another free
+ * port is used. A busy port they chose is one sentence naming it and the way out.
+ */
+async function openInspector(store: InstanceType<typeof TraceStore>, port: number, chosen: boolean) {
+  const { startInspector } = await import('./inspector/server.ts');
+  try {
+    return await startInspector(store, port);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+    if (!chosen) return startInspector(store, 0);
+    throw new Error(`port ${port} is in use. Stop whatever is using it, or pick another with --port, e.g. --port ${port + 10}.`);
+  }
+}
+const listeningOn = (server: import('node:http').Server) => (server.address() as import('node:net').AddressInfo).port;
+
 /** Everything the CLI does. Called when this file is the script, and by the `bin`, cli.ts. */
 export async function main(): Promise<void> {
   const subcommand = process.argv[2];
@@ -533,9 +555,14 @@ export async function main(): Promise<void> {
         break;
       }
       const store = new TraceStore(path);
-      const { startInspector } = await import('./inspector/server.ts');
-      await startInspector(store, port);
-      console.error(`qa-spine inspector → http://127.0.0.1:${port}  (reading ${path})`);
+      try {
+        const server = await openInspector(store, port, requestedPort(process.argv.slice(3)) !== undefined);
+        console.error(`qa-spine inspector → http://127.0.0.1:${listeningOn(server)}  (reading ${path})`);
+      } catch (err) {
+        console.error(`qa-spine inspect: ${err instanceof Error ? err.message : err}`);
+        store.close();
+        process.exitCode = 1;
+      }
       break;
     }
     case 'merge': {
@@ -1018,8 +1045,10 @@ Next, to reach a first release decision:
       // QA_SPINE_DB is deliberately ignored: the point of the demo is that it does not
       // write where your data lives. The ledger is append-only, so a demo seeded into a
       // real store would be permanent.
-      const demoDb = join(tmpdir(), 'qa-spine-demo.db');
-      const briefPath = join(tmpdir(), 'qa-spine-demo-brief.html');
+      // Its own folder per run, deleted on Ctrl-C: a demo leaves nothing behind.
+      const demoDir = mkdtempSync(join(tmpdir(), 'qa-spine-demo-'));
+      const demoDb = join(demoDir, 'trace.db');
+      const briefPath = join(demoDir, 'brief.html');
 
       let demo: { store: InstanceType<typeof TraceStore>; verdictId: string };
       try {
@@ -1028,17 +1057,34 @@ Next, to reach a first release decision:
       } catch (err) {
         // Fail before starting the Inspector — nobody should be shown a half-built store.
         console.error(`demo failed while seeding: ${err instanceof Error ? err.message : err}`);
+        rmSync(demoDir, { recursive: true, force: true });
         process.exitCode = 1;
         break;
       }
 
-      const { startInspector } = await import('./inspector/server.ts');
-      await startInspector(demo.store, port);
+      let server: import('node:http').Server;
+      try {
+        server = await openInspector(demo.store, port, requestedPort(process.argv.slice(3)) !== undefined);
+      } catch (err) {
+        console.error(`qa-spine demo: ${err instanceof Error ? err.message : err}`);
+        demo.store.close();
+        rmSync(demoDir, { recursive: true, force: true });
+        process.exitCode = 1;
+        break;
+      }
+      const stop = () => {
+        server.close();
+        demo.store.close();
+        rmSync(demoDir, { recursive: true, force: true });
+        process.exit(0);
+      };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
 
-      console.log(`seeded ${demoDb}`);
+      console.log(`store  ${demoDb}`);
       console.log(`brief  ${briefPath}`);
-      console.log(`\nqa-spine inspector → http://127.0.0.1:${port}`);
-      console.log('\nA throwaway store — your own data is untouched. Ctrl-C to stop.');
+      console.log(`\nqa-spine demo → http://127.0.0.1:${listeningOn(server)}`);
+      console.log('\nA throwaway store; your own data is untouched. Ctrl-C stops the demo and deletes it.');
       break;
     }
 

@@ -205,7 +205,14 @@ async function jsonBody(
   return parsed as Record<string, unknown>;
 }
 
+/** Rejects when it cannot listen (a busy port, say), rather than crashing the process. */
 export function startInspector(store: TraceStore, port = 4700): Promise<Server> {
   const server = createInspector(store);
-  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve(server);
+    });
+  });
 }
