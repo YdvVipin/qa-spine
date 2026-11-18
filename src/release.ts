@@ -622,6 +622,9 @@ const INTERNAL_TERMS: RegExp[] = [
  * I3: also exported and reused by `submitFindings` in audit.ts to lint `question`, the other
  * field the brief renders verbatim from AI prose.
  */
+/** A Jira issue key: project, dash, number. */
+export const JIRA_KEY = /^[A-Z][A-Z0-9]+-\d+$/;
+
 export function assertPlainLanguage(field: string, text: string): void {
   for (const pattern of INTERNAL_TERMS) {
     const hit = text.match(pattern);
@@ -660,7 +663,8 @@ export function recordVerdict(
     reason: string;
     cites: string[];
     changed: string[];
-    override?: { reason: string };
+    /** `defects`: the Jira keys of the bugs that track what is being shipped over (C1's shape). */
+    override?: { reason: string; defects?: string[] };
     provenance: Provenance;
     /** The `changed` of an earlier assessment of this release, when the caller has one. */
     assessedChanged?: string[];
@@ -687,10 +691,15 @@ export function recordVerdict(
   }
 
   let overrideReason: string | null = null;
+  let defects: string[] = [];
   if (input.override) {
     overrideReason = input.override.reason?.trim() ?? '';
     if (!overrideReason) throw new Error('override.reason must not be blank');
     assertPlainLanguage('override.reason', overrideReason);
+    defects = [...new Set((input.override.defects ?? []).map((d) => String(d).trim()))];
+    for (const d of defects) {
+      if (!JIRA_KEY.test(d)) throw new Error(`override.defects: "${d}" is not a Jira key like ABC-123`);
+    }
   }
   if (overrideReason && input.verdict === 'hold') {
     throw new Error('override is only meaningful with a ship verdict');
@@ -761,7 +770,12 @@ export function recordVerdict(
   // without knowing which question.
   const override =
     overrideReason && signals.length
-      ? { reason: overrideReason, findings: liveFindings, ...(liveTestRuns.length ? { testRuns: liveTestRuns } : {}) }
+      ? {
+          reason: overrideReason,
+          findings: liveFindings,
+          ...(liveTestRuns.length ? { testRuns: liveTestRuns } : {}),
+          ...(defects.length ? { defects } : {}),
+        }
       : null;
 
   return store.record({

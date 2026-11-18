@@ -31,6 +31,8 @@ export type GateOptions = {
   record?: boolean;
   reason?: string;
   overrideReason?: string;
+  /** Jira keys of the bugs tracking what an override ships over. Recorded with it. */
+  defects?: string[];
   approvedBy?: string;
   briefPath?: string;
   /** Block while a changed requirement was edited after its last audit. Off by default. */
@@ -283,7 +285,7 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     changed,
     // Only when it overrides something. recordVerdict rejects an override alongside a hold,
     // and discards one that overrode nothing.
-    override: overriding && verdict === 'ship' ? { reason: overrideReason! } : undefined,
+    override: overriding && verdict === 'ship' ? { reason: overrideReason!, ...(opts.defects?.length ? { defects: opts.defects } : {}) } : undefined,
     requireHumanAnswers: opts.requireHumanAnswers,
     blockOnSuspect: opts.blockOnSuspect,
     ...scope,

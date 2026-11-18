@@ -338,7 +338,11 @@ export function createServer(store: TraceStore) {
         environment: z.string().optional().describe('Only test runs in this environment count, e.g. staging.'),
         override: z
           .object({
-            reason: z.string().describe('Why you are shipping anyway. Blank is rejected.'),
+            reason: z.string().describe('Why you are shipping anyway, e.g. "Hotfix; the refund bug is tracked." Blank is rejected.'),
+            defects: z
+              .array(z.string())
+              .optional()
+              .describe('Jira keys of the bugs that track what ships over, e.g. ["SHOP-91"]. Recorded on the verdict.'),
           })
           .optional()
           .describe(
@@ -776,6 +780,7 @@ export async function main(): Promise<void> {
             record: { type: 'boolean' },
             reason: { type: 'string' },
             'override-reason': { type: 'string' },
+            defect: { type: 'string', multiple: true },
             'approved-by': { type: 'string' },
             'ticket-pattern': { type: 'string' },
             brief: { type: 'string' },
@@ -806,6 +811,7 @@ export async function main(): Promise<void> {
           record: values.record,
           reason: values.reason,
           overrideReason: values['override-reason'],
+          defects: (values.defect ?? []).flatMap((d) => d.split(',')).map((d) => d.trim()).filter(Boolean),
           approvedBy: values['approved-by'],
           briefPath: values.brief,
           blockOnSuspect: values['block-on-suspect'],

@@ -119,3 +119,22 @@ test('health returns the version and the store it reads', async () => {
   assert.equal(typeof r.version, 'string');
   assert.equal(typeof r.artifacts, 'number');
 });
+
+test('release_submit records the Jira bugs an override ships over, and refuses a key that is not one', async () => {
+  const { call, store } = await connect();
+  const req = store.record({ type: 'requirement', sourceRef: 'QA-1', content: { text: 'Totals are right.' }, provenance: human });
+  const tc = store.record({ type: 'test_case', content: { name: 'total' }, provenance: human, links: [{ to: req.id, relation: 'covers' }] });
+  store.record({ type: 'test_run', content: { status: 'failed' }, provenance: { tool: 'qa-spine ingest-junit', producer: 'tool' } as any, links: [{ to: tc.id, relation: 'verifies' }] });
+  const submit = (defects: string[]) =>
+    call('release_submit', {
+      releaseRef: 'v1', verdict: 'ship', reason: 'Shipping the hotfix today.', cites: [], changed: ['QA-1'],
+      override: { reason: 'The total bug is minor and tracked.', defects }, provenance: { ...human, approvedBy: 'rahul' },
+    });
+  const bad = await submit(['not a key']);
+  assert.equal(bad.isError, true);
+  assert.match(JSON.parse(bad.text).error, /override\.defects: "not a key" is not a Jira key/);
+  assert.equal(store.list('verdict').length, 0);
+  const ok = await submit(['SHOP-91']);
+  assert.equal(ok.isError, false, ok.text);
+  assert.deepEqual((store.list('verdict')[0].content.override as any).defects, ['SHOP-91']);
+});

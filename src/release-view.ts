@@ -10,7 +10,7 @@
 import type { TraceStore } from './trace/store.ts';
 import type { Artifact } from './trace/schema.ts';
 import { runGate } from './gate.ts';
-import { INGEST_TOOL, type Decision } from './release.ts';
+import { INGEST_TOOL, JIRA_KEY, recordVerdict, type Decision } from './release.ts';
 import { DECISION_WORDS, verdictHeadline, type Tone } from './words.ts';
 
 export class ReleaseNotFound extends Error {}
@@ -174,4 +174,72 @@ export function releaseView(store: TraceStore, input: { release: string } & Part
     decided,
     actions: { ship: g.decision === 'SHIP', hold: true, shipAnyway: g.decision === 'HOLD' },
   };
+}
+
+/** A decision the page cannot record, with the HTTP status that says why: 400 fix the form, 409 the release is not in that state. */
+export class DecisionRefused extends Error {
+  readonly status: 400 | 409;
+  constructor(status: 400 | 409, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export type DecideInput = { release: string; action: 'ship' | 'hold' | 'ship_anyway'; name?: string; reason?: string; defects?: string[] } & Partial<ReleaseScope>;
+
+/**
+ * Ship, Hold or Ship anyway, from the Release page. The rules are checked against the evidence
+ * now, not as it was when the page loaded: a result that lands between loading and clicking
+ * changes what may be recorded.
+ *
+ * - Every decision names a person (a claimed name: the Inspector has no sign-in).
+ * - Ship only when Ready to ship. Hold always; a blank note becomes "Held by <name> …".
+ * - Ship anyway only when Not ready, never Can't tell yet: a reason of 20+ characters and at
+ *   least one Jira key, recorded as the override's `defects`.
+ */
+export function decideRelease(store: TraceStore, input: DecideInput): ReleaseView {
+  const name = input.name?.trim() ?? '';
+  if (!name) throw new DecisionRefused(400, 'Type your name: every decision is recorded with who made it.');
+  const view = releaseView(store, input);
+  const now = view.headline;
+  const record = (verdict: 'ship' | 'hold', reason: string, override?: { reason: string; defects: string[] }) => {
+    try {
+      recordVerdict(store, {
+        releaseRef: view.release,
+        verdict,
+        reason,
+        cites: [],
+        changed: view.scope.changed,
+        commit: view.scope.commit,
+        environment: view.scope.environment,
+        ...(override ? { override } : {}),
+        provenance: { producer: 'human', approvedBy: name },
+      });
+    } catch (err) {
+      throw new DecisionRefused(400, err instanceof Error ? err.message : String(err));
+    }
+    return releaseView(store, { release: view.release, ...view.scope });
+  };
+
+  if (input.action === 'hold') {
+    return record('hold', input.reason?.trim() || `Held by ${name} on the Release page.`);
+  }
+  if (input.action === 'ship') {
+    if (!view.actions.ship) throw new DecisionRefused(409, `Ship is only for Ready to ship; this release is ${now} (${view.summary}).`);
+    return record('ship', input.reason?.trim() || `Shipped by ${name}: every test on every story passed.`);
+  }
+  if (input.action === 'ship_anyway') {
+    if (view.decision === 'UNKNOWN') {
+      throw new DecisionRefused(409, `Can't tell yet cannot be shipped anyway: nothing shows these stories work. ${view.summary}.`);
+    }
+    if (!view.actions.shipAnyway) throw new DecisionRefused(409, `Ship anyway is only for Not ready; this release is now ${now}.`);
+    const reason = input.reason?.trim() ?? '';
+    if (reason.length < 20) throw new DecisionRefused(400, 'Say why it ships anyway, in 20 characters or more.');
+    const defects = [...new Set((input.defects ?? []).map((d) => String(d).trim()).filter(Boolean))];
+    if (!defects.length) throw new DecisionRefused(400, 'Give the Jira bug that tracks each failure, e.g. ABC-123.');
+    const bad = defects.find((d) => !JIRA_KEY.test(d));
+    if (bad) throw new DecisionRefused(400, `"${bad}" is not a Jira key like ABC-123.`);
+    return record('ship', reason, { reason, defects });
+  }
+  throw new DecisionRefused(400, `Unknown decision ${JSON.stringify(input.action)}: use ship, hold or ship_anyway.`);
 }

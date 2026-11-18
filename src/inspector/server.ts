@@ -1,5 +1,5 @@
 import { createServer as createHttpServer, type Server } from 'node:http';
-import { releaseView, ReleaseNotFound } from '../release-view.ts';
+import { decideRelease, DecisionRefused, releaseView, ReleaseNotFound } from '../release-view.ts';
 import { GateError } from '../gate.ts';
 import { readFile } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
@@ -124,6 +124,34 @@ export function createInspector(store: TraceStore): Server {
         } catch (err) {
           if (err instanceof ReleaseNotFound) return send(404, { error: err.message });
           // The gate's own refusals (an empty store, say) are the user's to fix, not a server fault.
+          if (err instanceof GateError) return send(400, { error: err.message });
+          throw err;
+        }
+      }
+
+      // Ship / Hold / Ship anyway. The name is a claimed name, as for retract and answer.
+      if (req.method === 'POST' && url.pathname === '/api/release/decide') {
+        const body = await jsonBody(req);
+        const release = typeof body.release === 'string' ? body.release.trim() : '';
+        if (!release) return send(400, { error: 'say which release' });
+        const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',') : []);
+        try {
+          return send(
+            200,
+            decideRelease(store, {
+              release,
+              action: body.action as 'ship' | 'hold' | 'ship_anyway',
+              name: typeof body.name === 'string' ? body.name : undefined,
+              reason: typeof body.reason === 'string' ? body.reason : undefined,
+              defects: list(body.defects),
+              changed: list(body.changed).map((r) => r.trim()).filter(Boolean),
+              commit: typeof body.commit === 'string' && body.commit.trim() ? body.commit.trim() : undefined,
+              environment: typeof body.environment === 'string' && body.environment.trim() ? body.environment.trim() : undefined,
+            }),
+          );
+        } catch (err) {
+          if (err instanceof DecisionRefused) return send(err.status, { error: err.message });
+          if (err instanceof ReleaseNotFound) return send(404, { error: err.message });
           if (err instanceof GateError) return send(400, { error: err.message });
           throw err;
         }
