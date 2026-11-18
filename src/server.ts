@@ -480,6 +480,24 @@ const SUBCOMMANDS = new Set([
   'merge',
 ]);
 
+/**
+ * The line that registers qa-spine with Claude Code. Under `npx` the package sits in npm's
+ * temporary `_npx` cache, a path that can vanish or change between runs, so the line is a
+ * pinned npx command instead; an installed package gets its real, stable path.
+ */
+export function mcpCommand(packageRoot: string, version: string): string {
+  return /[\\/]_npx[\\/]/.test(packageRoot)
+    ? `claude mcp add qa-spine -- npx -y qa-spine@${version}`
+    : `claude mcp add qa-spine -- node ${join(packageRoot, 'dist', 'server.js')}`;
+}
+
+/** A write `init` could not make, as one sentence with the folder and what to do. */
+function initFailure(what: string, err: unknown): string {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  const why = code === 'EACCES' || code === 'EPERM' ? 'permission denied' : code === 'EROFS' ? 'the disk is read-only' : String((err as Error)?.message ?? err);
+  return `could not write ${what} in ${process.cwd()} (${why}). Run qa-spine init from a folder you can write to, usually your project's root.`;
+}
+
 /** Everything the CLI does. Called when this file is the script, and by the `bin`, cli.ts. */
 export async function main(): Promise<void> {
   const subcommand = process.argv[2];
@@ -946,7 +964,7 @@ export async function main(): Promise<void> {
           copyFileSync(resolve(packageRoot, 'rubrics', 'ambiguity.json'), rubricDest);
           console.log('✓ rubrics/ambiguity.json — yours now, edit and commit it');
         } catch (err) {
-          console.error(`could not write rubrics/ambiguity.json: ${err instanceof Error ? err.message : err}`);
+          console.error(initFailure('rubrics/ambiguity.json', err));
           failed = true;
         }
       }
@@ -965,16 +983,21 @@ export async function main(): Promise<void> {
           console.log(`✓ .gitignore += ${ENTRY}`);
         }
       } catch (err) {
-        console.error(`could not update .gitignore: ${err instanceof Error ? err.message : err}`);
+        console.error(initFailure('.gitignore', err));
         failed = true;
       }
 
-      // 3. The MCP line. The path is inside node_modules and differs per install —
-      // nobody should have to go and find it.
+      // 3. The MCP line: nobody should have to go and find the path.
       console.log('\nRegister with Claude Code:');
-      console.log(`  claude mcp add qa-spine -- node ${resolve(packageRoot, 'dist', 'server.js')}`);
-      console.log('\nThen: npx qa-spine demo   # see it working — writes only to a temp file');
+      console.log(`  ${mcpCommand(packageRoot, VERSION)}`);
       console.log(`\nAudits use ${rubricPath()}. Set QA_SPINE_RUBRICS to read rubrics from another directory.`);
+      // 4. The way to a first decision, so the next command is never a search through the README.
+      console.log(`
+Next, to reach a first release decision:
+  1. npx qa-spine demo                          a worked example, in a throwaway store
+  2. npx qa-spine record < story.json           your stories (or the Jira, GitHub and Linear importers in the README)
+  3. npx qa-spine ingest-junit reports/*.xml    your test results
+  4. npx qa-spine gate --changed PROJ-42        SHIP, HOLD or UNKNOWN, and why`);
 
       if (failed) process.exitCode = 1;
       break;

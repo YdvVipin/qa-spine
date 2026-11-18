@@ -63,6 +63,13 @@ evaluator.
 
 ### Packaging
 
+- **The bin is `dist/cli.js`.** On a Node older than 22.13 it prints one sentence naming both
+  versions and exits 2, instead of the stack trace `node:sqlite` gives. It also stops SQLite's
+  "experimental feature" warning from printing on every command. `dist/server.js` still runs on
+  its own, so existing `claude mcp add … node …/dist/server.js` lines keep working.
+- **`init`** prints `claude mcp add qa-spine -- npx -y qa-spine@<version>` when run through
+  `npx` (the old line pointed into npm's temporary `npx` cache), says in one sentence which folder
+  it could not write to and what to do, and ends with the four commands to a first decision.
 - **Node >= 22.13** (was >= 22.5, where `node:sqlite` needs `--experimental-sqlite` and the
   package did not start). Working from source needs 22.18, for TypeScript without a flag.
 - `scripts/smoke-package.mjs` installs a packed tarball into a fresh project under a path

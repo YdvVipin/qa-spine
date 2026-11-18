@@ -31,6 +31,14 @@ if (invokedAsScript()) {
     console.error(tooOld);
     process.exit(2);
   }
+  // node:sqlite prints "ExperimentalWarning: SQLite is an experimental feature" on every
+  // command, which reads to a new user as something having gone wrong. Only that one warning is
+  // dropped; every other warning still prints.
+  const emitWarning = process.emitWarning;
+  process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
+    if (String(typeof warning === 'string' ? warning : warning?.message).includes('SQLite is an experimental feature')) return;
+    return (emitWarning as (...args: unknown[]) => void).call(process, warning, ...rest);
+  }) as typeof process.emitWarning;
   const { main } = await import('./server.ts');
   await main();
 }
