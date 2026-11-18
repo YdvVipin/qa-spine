@@ -41,6 +41,19 @@ evaluator.
 
 ### Added
 
+- **The Release page, for a release manager.** Open the Inspector with
+  `?release=<id>&changed=PROJ-1,PROJ-2` (once decided, `?release=<id>` alone): the decision as
+  one sentence in one colour, then Failed (with the Jira bug and who found it), No evidence and
+  Passed, and Ship / Hold / Ship anyway. Ship only when Ready to ship; Ship anyway only when Not
+  ready, never Can't tell yet, with a name, a reason of 20+ characters and a Jira key. The page
+  shows what will be recorded before it is, and a decided release says "Decided on <date> by
+  <name>; N results have changed since". The name is typed, not signed in, and the page says so:
+  do not expose the Inspector publicly with decisions on until it has a sign-in. Nothing new is
+  stored for an undecided release (its stories are in the link), so stores stay readable by 0.3.
+- **`npx qa-spine demo` opens the Release page** on three synthetic releases, one of each kind,
+  and prints a link to each (`--no-open` to stay in the terminal; it never opens in CI).
+- Overrides carry their Jira bugs: `override.defects` on `release_submit`, `gate --defect KEY`.
+
 - `gate --commit SHA` / `--environment NAME` (and the same on `assess_release_risk`,
   `release_submit`, the Action): only runs on that build count.
 - `gate --advisory` (Action input `advisory`): exit 0 whatever the decision; the decision
