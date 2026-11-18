@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { VERSION } from '../src/server.ts';
+import { SUBCOMMANDS, VERSION } from '../src/server.ts';
 
 const REPO = process.cwd();
 
@@ -72,7 +72,8 @@ for (const flag of ['version', '--version', '-v']) {
 
 test('a typo does not silently start a stdio MCP server', () => {
   const { code, out, err, madeStoreDir } = run(['hlep']);
-  assert.equal(code, 1, `must exit 1, not hang or die by signal (got ${code})`);
+  // 2, not 1: to a CI script, gate's 1 means HOLD, so `qa-spine gaet` must not read as "blocked".
+  assert.equal(code, 2, `must exit 2, not hang or die by signal (got ${code})`);
   assert.match(err, /unknown subcommand 'hlep'/);
   assert.match(err, /usage: qa-spine/, 'the fix is on the same screen as the mistake');
   assert.equal(out, '', 'diagnostics belong on stderr');
@@ -83,3 +84,15 @@ test('the CLI reports the version package.json publishes, so the two cannot drif
   const { readFileSync } = await import('node:fs');
   assert.equal(VERSION, JSON.parse(readFileSync('package.json', 'utf8')).version);
 });
+
+for (const sub of SUBCOMMANDS) {
+  test(`${sub} --help and -h print its usage, exit 0, and touch nothing`, () => {
+    for (const flag of ['--help', '-h']) {
+      const { code, out, madeStoreDir } = run([sub, flag]);
+      assert.equal(code, 0, `${sub} ${flag} exited ${code}`);
+      assert.match(out, new RegExp(`^  ${sub}\\b`, 'm'), `${sub} ${flag} shows its own line:\n${out}`);
+      assert.match(out, /qa-spine help/, 'and where the full list is');
+      assert.equal(madeStoreDir, false, `${sub} ${flag} must not create .qa-spine/`);
+    }
+  });
+}

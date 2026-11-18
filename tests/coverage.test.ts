@@ -12,6 +12,8 @@ import { createInspector } from '../src/inspector/server.ts';
 
 const human = { producer: 'human' as const };
 const ai = { producer: 'ai' as const, model: 'claude-haiku-4-5', promptVersion: 'ambiguity/1' };
+/** A pass only counts from a report or with a name on it; these come from a report. */
+const ingest = { producer: 'tool' as const, tool: 'qa-spine ingest-junit' };
 
 /**
  * PROJ-1: tested, passing, one open question. PROJ-2: no test at all. PROJ-3: edited since its
@@ -21,7 +23,7 @@ function seed(store: TraceStore) {
   const r1 = store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'Refunds are quick.' }, provenance: human });
   store.record({ type: 'finding', content: { category: 'AMB-VAGUE-QUANT', quote: 'quick', question: 'How quick?' }, provenance: ai, links: [{ to: r1.id, relation: 'derived_from' }] });
   const t1 = store.record({ type: 'test_case', content: { name: 'refund speed' }, provenance: human, links: [{ to: r1.id, relation: 'covers' }] });
-  store.record({ type: 'test_run', content: { status: 'passed' }, provenance: human, links: [{ to: t1.id, relation: 'verifies' }] });
+  store.record({ type: 'test_run', content: { status: 'passed' }, provenance: ingest, links: [{ to: t1.id, relation: 'verifies' }] });
 
   store.record({ type: 'requirement', sourceRef: 'PROJ-2', content: { text: 'Receipts are emailed.' }, provenance: human });
 
@@ -32,7 +34,7 @@ function seed(store: TraceStore) {
 
   const r4 = store.record({ type: 'requirement', sourceRef: 'PROJ-4', content: { text: 'Clean.' }, provenance: human });
   const t4 = store.record({ type: 'test_case', content: { name: 'clean' }, provenance: human, links: [{ to: r4.id, relation: 'covers' }] });
-  store.record({ type: 'test_run', content: { status: 'passed' }, provenance: human, links: [{ to: t4.id, relation: 'verifies' }] });
+  store.record({ type: 'test_run', content: { status: 'passed' }, provenance: ingest, links: [{ to: t4.id, relation: 'verifies' }] });
 }
 
 test('a changed requirement no test covers, in any version, is untested', () => {
@@ -57,7 +59,7 @@ test('requirementStatus gives one row per current requirement, worst first', () 
   assert.deepEqual(rows.map((r) => [r.sourceRef, r.status]), [
     ['PROJ-1', 'blocked'],
     ['PROJ-3', 'blocked'],
-    ['PROJ-2', 'warning'],
+    ['PROJ-2', 'unknown'],
     ['PROJ-4', 'clear'],
   ]);
   const p3 = rows.find((r) => r.sourceRef === 'PROJ-3')!;
@@ -106,12 +108,12 @@ function cli(args: string[], db: string) {
   }
 }
 
-test('the gate reports untested areas as a warning; --require-coverage blocks', () => withDb((db) => {
+test('an untested area is UNKNOWN without asking; --require-coverage is accepted and changes nothing', () => withDb((db) => {
   const plain = cli(['gate', '--changed', 'PROJ-2'], db);
-  assert.equal(plain.code, 0);
+  assert.equal(plain.code, 2);
   assert.match(plain.out, /1 changed requirement has no tests/);
-  assert.equal(cli(['gate', '--changed', 'PROJ-2', '--require-coverage'], db).code, 1);
-  assert.equal(cli(['gate', '--changed', 'PROJ-2', '--require-coverage', '--override-reason', 'x', '--approved-by', 'y'], db).code, 1, 'only a test clears it');
+  assert.equal(cli(['gate', '--changed', 'PROJ-2', '--require-coverage'], db).code, 2);
+  assert.equal(cli(['gate', '--changed', 'PROJ-2', '--override-reason', 'x', '--approved-by', 'y'], db).code, 2, 'only a test clears it');
   assert.equal(cli(['gate', '--changed', 'PROJ-4', '--require-coverage'], db).code, 0);
 }));
 

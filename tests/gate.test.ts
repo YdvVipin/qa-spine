@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { TraceStore } from '../src/trace/store.ts';
+import { passingTest } from './support.ts';
 
 const REPO = process.cwd();
 const human = { producer: 'human' as const };
@@ -53,12 +54,15 @@ function seed(dbPath: string) {
   });
   // A second requirement with nothing open, so a clean pass is reachable from real data
   // rather than only from a ref that matches nothing.
-  store.record({
+  const proj7 = store.record({
     type: 'requirement',
     sourceRef: 'PROJ-7',
     content: { text: 'The refund button is disabled while a refund is in flight.' },
     provenance: human,
   });
+  // Both tested and passing, so the only thing between PROJ-42 and a ship is its open question.
+  passingTest(store, req.id);
+  passingTest(store, proj7.id);
   return { store, req, open };
 }
 
@@ -94,7 +98,7 @@ test('a live question blocks and is named in the output', () => {
   withStore(({ db }) => {
     const { code, out } = gate(['--changed', 'PROJ-42'], db);
     assert.equal(code, 1, 'a live signal must fail the check');
-    assert.match(out, /release blocked/);
+    assert.match(out, /Not ready/);
     assert.match(out, /What happens when notification delivery fails\?/);
   });
 });
@@ -103,7 +107,7 @@ test('a requirement with nothing open passes', () => {
   withStore(({ db }) => {
     const { code, out } = gate(['--changed', 'PROJ-7'], db);
     assert.equal(code, 0);
-    assert.match(out, /no blockers/);
+    assert.match(out, /Ready to ship/);
   });
 });
 
@@ -306,7 +310,7 @@ test('--brief writes a readable page for the verdict it just recorded', () => {
     );
     assert.ok(existsSync(briefPath));
     const html = readFileSync(briefPath, 'utf8');
-    assert.match(html, /Not ready to ship/);
+    assert.match(html, /<h1>Not ready<\/h1>/);
     assert.match(html, /What happens when notification delivery fails\?/);
     assert.match(html, /Recorded automatically by qa-spine gate/);
   });
@@ -333,7 +337,7 @@ test('a failing test on a changed requirement blocks and is named', () => {
     addTest(store, [{ status: 'failed', message: 'button stayed enabled' }]);
     const { code, out } = gate(['--changed', 'PROJ-7'], db);
     assert.equal(code, 1);
-    assert.match(out, /release blocked/);
+    assert.match(out, /Not ready/);
     assert.match(out, /1 failing test on areas this change touches/);
     assert.match(out, /button disables/);
     assert.match(out, /button stayed enabled/);
@@ -366,7 +370,7 @@ test('a flaky test whose latest run passed does not block but is listed', () => 
     addTest(store, [{ status: 'failed', commit: 'c1' }, { status: 'passed', commit: 'c1' }]);
     const { code, out } = gate(['--changed', 'PROJ-7'], db);
     assert.equal(code, 0);
-    assert.match(out, /no blockers/);
+    assert.match(out, /Ready to ship/);
     assert.match(out, /1 flaky test/);
     const r = JSON.parse(gate(['--changed', 'PROJ-7', '--json'], db).out);
     assert.deepEqual(r.flakyTests.map((t: any) => t.name), ['button disables']);
@@ -439,12 +443,12 @@ test('--block-on-suspect blocks, and an override does not clear it', async () =>
     const db = join(dir, 'trace.db');
     const { store } = seed(db);
     await editProj7(store);
-    assert.equal(gate(['--changed', 'PROJ-7', '--block-on-suspect'], db).code, 1);
+    assert.equal(gate(['--changed', 'PROJ-7', '--block-on-suspect'], db).code, 2, 'unaudited since the edit: UNKNOWN');
     const overridden = gate(
       ['--changed', 'PROJ-7', '--block-on-suspect', '--record', '--release-ref', 'v6', '--override-reason', 'Hotfix.', '--approved-by', 'a.rivera', '--json'],
       db,
     );
-    assert.equal(overridden.code, 1, 'only a re-audit clears a suspect requirement');
+    assert.equal(overridden.code, 2, 'only a re-audit clears a suspect requirement');
     const verdict = new TraceStore(db).get(JSON.parse(overridden.out).recorded.verdictId)!;
     assert.equal(verdict.content.verdict, 'hold');
     assert.match(String(verdict.content.reason), /edited after they were last checked/);
@@ -463,7 +467,8 @@ test('--block-on-suspect with a question and an override holds rather than error
       ['--changed', 'PROJ-7,PROJ-42', '--block-on-suspect', '--record', '--release-ref', 'v7', '--override-reason', 'Hotfix.', '--approved-by', 'a.rivera', '--json'],
       db,
     );
-    assert.equal(r.code, 1, r.err);
+    assert.equal(r.code, 2, r.err);
+    assert.equal(JSON.parse(r.out).decision, 'UNKNOWN', 'the override accepted the question; the unaudited edit is still unknown');
     assert.equal(JSON.parse(r.out).recorded.verdict, 'hold');
   } finally {
     rmSync(dir, { recursive: true, force: true });

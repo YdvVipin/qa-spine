@@ -1,5 +1,131 @@
 # Changelog
 
+## 0.4.0 — 2026-11-18
+
+### Changes in behaviour — read before upgrading: the gate now says UNKNOWN
+
+Before, missing evidence read as green: a store with nothing matching the change, a
+requirement with no test, a test that never ran, a skip after a failure, a pass on another
+build and a status like `banana` could all ship. Every surface — `gate`, `assess_release_risk`,
+`release_submit`, the readiness view and the exports — now reaches one `decision` through one
+evaluator.
+
+- **`decision` and `reasons`.** `SHIP`, `HOLD` (known blocker: `UNANSWERED_FINDING`,
+  `FAILED_TEST`), `UNKNOWN` (missing evidence: `SCOPE_UNRESOLVED`, `NO_TEST`,
+  `NO_REQUIRED_RUN`, `SKIPPED_REQUIRED_TEST`, `INVALID_STATUS`, `STALE_AUDIT`) or
+  `OVERRIDDEN`. Gate exit codes: `0` SHIP/OVERRIDDEN, `1` HOLD, `2` UNKNOWN (and, as before,
+  a gate that could not run). `shippable` is kept, true on SHIP and OVERRIDDEN.
+- **An untested requirement is UNKNOWN by default.** `--require-coverage` is accepted and
+  has no effect. **Expect builds that passed under 0.3 to exit 2** where a changed
+  requirement has no test, or nothing in the record matches the change.
+- **A covering test with no run that counts is UNKNOWN**, including one whose only result is
+  an unnamed hand-typed pass, and one whose only failing run was retracted.
+- **Only a pass clears a failure.** A skip after a failure leaves the failure deciding; a
+  test whose latest run was skipped is UNKNOWN.
+- **An override clears HOLD, never UNKNOWN.** `release_submit` refuses `ship` while evidence
+  is missing, override or not. `--override-reason` and `--approved-by` are trimmed and
+  checked in the gate itself, so a whitespace name is refused with or without `--record`.
+- **`--block-on-suspect` now gives UNKNOWN (exit 2)**, not HOLD (exit 1).
+- **Test run statuses are checked on write.** `status` must be one of `passed`, `failed`,
+  `error`, `skipped`, `blocked`, `not_run`, `cancelled`, `unknown`, through every write path.
+  **Custom producers that write `completed` (QAAE's Loop A) must write `passed`**, and name
+  the person in `provenance.approvedBy` for a hand-recorded pass to count. Old rows with other
+  statuses still load and merge; the gate reads them as UNKNOWN.
+- **Verdicts record `decision`, `reasons`, and `commit`/`environment`** when given.
+- **The project's `./rubrics` is used.** `init` copies the rubric there and says it is yours
+  to edit; 0.3 then ignored the copy and read the package's. Precedence is now
+  `QA_SPINE_RUBRICS`, then `./rubrics/<name>.json`, then the package. Findings are stamped
+  with the version of the file actually read.
+- **Readiness has an `unknown` status** (and an `incomplete` count), between blocked and
+  warning; untested requirements moved there from warning.
+
+### Added
+
+- **The Release page, for a release manager.** Open the Inspector with
+  `?release=<id>&changed=PROJ-1,PROJ-2` (once decided, `?release=<id>` alone): the decision as
+  one sentence in one colour, then Failed (with the Jira bug and who found it), No evidence and
+  Passed, and Ship / Hold / Ship anyway. Ship only when Ready to ship; Ship anyway only when Not
+  ready, never Can't tell yet, with a name, a reason of 20+ characters and a Jira key. The page
+  shows what will be recorded before it is, and a decided release says "Decided on <date> by
+  <name>; N results have changed since". The name is typed, not signed in, and the page says so:
+  do not expose the Inspector publicly with decisions on until it has a sign-in. Nothing new is
+  stored for an undecided release (its stories are in the link), so stores stay readable by 0.3.
+- **`npx qa-spine demo` opens the Release page** on three synthetic releases, one of each kind,
+  and prints a link to each (`--no-open` to stay in the terminal; it never opens in CI).
+- **A failed run can carry its bug** as `content.defect: {key, url?, state?}`, checked on write
+  through every path (C1). The brief and the Release page list each failure with it; the older
+  free-text `bug_key` is still read.
+- **`record --batch`**: one JSON object per line, one process, one transaction (E5); any bad line
+  names its number and nothing is written. Automated runs recorded with `producer: "tool"` read
+  as automated on the Release page (E3). A store kept locked past the 5-second wait now says it
+  is busy and that nothing was written (E1).
+- Overrides carry their Jira bugs: `override.defects` on `release_submit`, `gate --defect KEY`.
+
+- `gate --commit SHA` / `--environment NAME` (and the same on `assess_release_risk`,
+  `release_submit`, the Action): only runs on that build count.
+- `gate --advisory` (Action input `advisory`): exit 0 whatever the decision; the decision
+  itself still says HOLD or UNKNOWN.
+- `ingest-junit --map tests.json` links tests whose names carry no ticket key: test name (or
+  `classname::name`) to one key or a list, added to any key the name has. Unmatched entries are
+  reported as `unusedMapEntries`; a malformed map writes nothing.
+- `ingest-junit --environment NAME`. The same `--run-ref` delivering the same results again
+  records nothing new; the same ref with a different outcome is refused.
+- `gate --text "<PR title>"` (Action input `text`): assesses the ticket keys in free text,
+  matched by `--ticket-pattern`. Text with no key in it is nothing to assess, not a pass.
+- Action: `decision` output; `commit`, `environment`, `advisory` inputs; the run ref includes
+  the attempt number so a re-run is a new result; the summary is posted on UNKNOWN too.
+- **Action: with `junit`, the gate decides on the checked-out commit.** Results recorded for
+  another build no longer count, and the ingested reports carry the same commit. A test that
+  did not run in this job is UNKNOWN. Set `commit: any` to count results from every build
+  (tests split across workflows); an explicit `commit` still wins. The CLI stays opt-in.
+- **Action: `version` defaults to `0.4.0`**, not `latest`: a qa-spine release reaches a
+  workflow only when it moves to an Action tag that names it.
+
+- **One vocabulary for people: Ready to ship, Not ready, Can't tell yet, Shipped anyway.** The
+  gate summary heading (was "no blockers" / "release blocked" / "cannot tell — evidence is
+  missing") and the brief headline (was "Cleared to ship" / "Not ready to ship") now use these
+  words, from one table (`src/words.ts`) with a plain sentence per reason code. The JSON codes
+  are unchanged. A ship recorded with an override before 0.4 reads as Shipped anyway.
+- **MCP tools say what they return, and refusals say how to fix them.** Every tool description
+  says what comes back; every input has a description with an example. `release_submit` refused
+  for missing evidence now names each open reason and the action that closes it (from one table,
+  `src/words.ts`). `assess_release_risk` no longer says a named hand-recorded pass needs an
+  override (in 0.4 a name in `approvedBy` is enough). No tool or input was renamed.
+
+### Packaging
+
+- **The bin is `dist/cli.js`.** On a Node older than 22.13 it prints one sentence naming both
+  versions and exits 2, instead of the stack trace `node:sqlite` gives. It also stops SQLite's
+  "experimental feature" warning from printing on every command. `dist/server.js` still runs on
+  its own, so existing `claude mcp add … node …/dist/server.js` lines keep working.
+- **`init`** prints `claude mcp add qa-spine -- npx -y qa-spine@<version>` when run through
+  `npx` (the old line pointed into npm's temporary `npx` cache), says in one sentence which folder
+  it could not write to and what to do, and ends with the four commands to a first decision.
+- **`<command> --help`** (and `-h`) prints that command's usage, for every subcommand, without
+  opening a store or reading input. Before, most said "Unknown option", `record --help` waited for
+  input and `verify --help` ran verify. **An unknown subcommand exits 2, not 1**: to a CI script
+  `gate`'s 1 means HOLD, so a typo must not read as "release blocked".
+- **`demo`** keeps its store and brief in a new temporary folder per run and deletes it on Ctrl-C
+  (it used to leave fixed files in the temp folder). If port 4700 is taken it uses another free
+  port; a port you chose that is taken gets one sentence, for `inspect` too, instead of a crash.
+- **Node >= 22.13** (was >= 22.5, where `node:sqlite` needs `--experimental-sqlite` and the
+  package did not start). Working from source needs 22.18, for TypeScript without a flag.
+- `scripts/smoke-package.mjs` installs a packed tarball into a fresh project under a path
+  with spaces and runs version, init, record, ingest, gate, verify, export, the MCP handshake
+  and the Inspector against it. `.github/workflows/ci.yml` runs the tests, packs once, and
+  smoke-tests that one tarball on Linux, macOS and Windows under Node 22.13, 22, 24 and 26.
+
+### Security
+
+- **The Action no longer splices inputs into its shell script.** Every input — `since`,
+  `changed`, `junit`, `reason`, `override-reason`, `approved-by`, `release-ref`,
+  `ticket-pattern`, `version` — reaches the script through the environment, so a pull request
+  title holding `$(…)` is data. 0.3's example passed the title as `changed`, which a hostile
+  title could use to run commands in the job. **Move a title from `changed` to `text`**: as a
+  `changed` ref the whole title matched nothing.
+- `version` must be a release or a dist-tag; `npm:`, `file:` and URL specs are refused before
+  `npx` runs.
+
 ## 0.3.0 — 2026-11-03
 
 ### Changes in behaviour — release gate

@@ -1,6 +1,7 @@
 import type { TraceStore } from './trace/store.ts';
+import { verdictHeadline } from './words.ts';
 import type { Artifact } from './trace/schema.ts';
-import { flakyOn, isHandRecordedPass } from './release.ts';
+import { defectOf, flakyOn, isHandRecordedPass } from './release.ts';
 
 /**
  * Renders one recorded verdict as a self-contained page for a non-technical reader.
@@ -76,7 +77,16 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   }
 
   const c = verdict.content as Record<string, any>;
-  const shipped = c.verdict === 'ship';
+  // What the evidence showed, apart from what the person decided. Absent on verdicts recorded
+  // before 0.4, which say nothing here rather than something they never recorded.
+  const EVIDENCE: Record<string, string> = {
+    SHIP: 'every changed area has a test that passed, and nothing blocks.',
+    HOLD: 'a known problem is unresolved.',
+    UNKNOWN: 'incomplete — some changed areas have nothing showing they work.',
+    OVERRIDDEN: 'known problems remain, and a named person accepted them.',
+  };
+  const evidence = EVIDENCE[String(c.decision)];
+  const headline = verdictHeadline(c).headline;
   const reason = String(c.reason ?? '').trim();
   const changed: string[] = Array.isArray(c.changed) ? c.changed : [];
   const unmatched = new Set<string>(Array.isArray(c.unmatched) ? c.unmatched : []);
@@ -182,11 +192,15 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
   const testBlocks = failingTests
     .map(({ run, name, flaky, handPassLater }) => {
       const message = String(run.content.message ?? '').trim();
+      const bug = defectOf(run);
+      // Only an http(s) link is ever recorded (defectProblem), so an href here cannot run script.
+      const bugLine = bug ? `<p class="q-note">Bug: ${bug.url ? `<a href="${esc(bug.url)}" rel="noopener noreferrer">${esc(bug.key)}</a>` : esc(bug.key)}</p>` : '';
       return `
       <div class="q">
         <div class="q-when">${handPassLater ? 'Last counted run' : 'Last run'} on ${esc(longDate(run.createdAt))}${run.content.status === 'error' ? ' · could not run to completion' : ''}</div>
         <div class="q-ask">${esc(name)}</div>
         ${message ? `<p class="q-quote">${esc(message)}</p>` : ''}
+        ${bugLine}
         ${flaky ? '<p class="q-note">This test also passed on the same version of the code, so it may be unreliable rather than a real fault.</p>' : ''}
         ${handPassLater ? '<p class="q-note">A later pass was entered by hand rather than coming from a test run, so it did not count without a named approver.</p>' : ''}
       </div>`;
@@ -221,13 +235,14 @@ export function renderBrief(store: TraceStore, verdictId: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Release ${esc(verdict.sourceRef ?? '')} — ${shipped ? 'cleared to ship' : 'not ready to ship'}</title>
+<title>Release ${esc(verdict.sourceRef ?? '')} — ${esc(headline)}</title>
 <style>${STYLE}</style>
 </head>
 <body>
 <main>
-  <h1>${shipped ? 'Cleared to ship' : 'Not ready to ship'}</h1>
+  <h1>${esc(headline)}</h1>
   <p class="sub">Release ${esc(verdict.sourceRef ?? 'unrecorded')} · decision recorded on ${esc(longDate(verdict.createdAt))}.</p>
+  ${evidence ? `<p>What the evidence showed: ${esc(evidence)}</p>` : ''}
 
   <h2>Why this decision was made</h2>
   <p>${reason ? esc(reason) : 'No explanation was provided with this decision.'}</p>

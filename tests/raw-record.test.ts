@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { TraceStore } from '../src/trace/store.ts';
+import { passingTest } from './support.ts';
 import { createServer } from '../src/server.ts';
 
 const human = { producer: 'human' as const };
@@ -99,7 +100,7 @@ test('the CLI record subcommand refuses the same things', () => {
 
 test('a verdict naming fewer areas than its assessment records what was dropped', async () => {
   const { store, call } = await connect();
-  store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
+  passingTest(store, store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human }).id);
   await call('assess_release_risk', { changed: ['PROJ-1', 'src/pay.ts', 'src/refund.ts'], releaseRef: 'v5' });
   const res = await call('release_submit', {
     releaseRef: 'v5', verdict: 'ship', reason: 'Clean.', cites: [], changed: ['PROJ-1'], provenance: human,
@@ -110,7 +111,7 @@ test('a verdict naming fewer areas than its assessment records what was dropped'
 
 test('a verdict naming everything it assessed records no dropped field', async () => {
   const { store, call } = await connect();
-  store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
+  passingTest(store, store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human }).id);
   await call('assess_release_risk', { changed: ['PROJ-1'], releaseRef: 'v5' });
   const res = await call('release_submit', {
     releaseRef: 'v5', verdict: 'ship', reason: 'Clean.', cites: [], changed: ['PROJ-1', 'src/extra.ts'], provenance: human,
@@ -120,7 +121,7 @@ test('a verdict naming everything it assessed records no dropped field', async (
 
 test('an assessment of a different release is not compared', async () => {
   const { store, call } = await connect();
-  store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
+  passingTest(store, store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human }).id);
   await call('assess_release_risk', { changed: ['PROJ-1', 'src/pay.ts'], releaseRef: 'v4' });
   const res = await call('release_submit', {
     releaseRef: 'v5', verdict: 'ship', reason: 'Clean.', cites: [], changed: ['PROJ-1'], provenance: human,

@@ -1,6 +1,6 @@
 {
   "name": "qa-spine",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server exposing QA-lifecycle agents over a traceability spine: requirement -> findings -> tests -> results -> release verdict, with provenance for every AI-produced artifact.",
   "license": "MIT",
   "repository": {
@@ -12,9 +12,9 @@
     "url": "https://github.com/YdvVipin/qa-spine/issues"
   },
   "type": "module",
-  "bin": {"qa-spine": "dist/server.js"},
+  "bin": {"qa-spine": "dist/cli.js"},
   "files": ["dist", "rubrics", "locales", "README.md"],
-  "engines": {"node": ">=22.5"},
+  "engines": {"node": ">=22.13"},
   "scripts": {
     "test": "node --test 'tests/*.test.ts'",
     "prepublishOnly": "npm test && npm run build",

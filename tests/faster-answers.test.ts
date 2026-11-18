@@ -8,6 +8,7 @@ import { TraceStore } from '../src/trace/store.ts';
 import { submitFindings, recordAnswer, openQuestions } from '../src/audit.ts';
 import { recordVerdict } from '../src/release.ts';
 import { renderBrief } from '../src/brief.ts';
+import { passingTest } from './support.ts';
 
 const human = { producer: 'human' as const };
 const ai = { producer: 'ai' as const, model: 'claude-haiku-4-5' } as any;
@@ -21,6 +22,7 @@ function seed(store: TraceStore, suggestedAnswer: string | undefined = SUGGESTIO
     findings: [{ category: 'AMB-VAGUE-QUANT', quote: 'processed quickly', question: 'How quick is quick?', confidence: 'high', ...(suggestedAnswer ? { suggestedAnswer } : {}) }],
     provenance: ai,
   });
+  passingTest(store, req.id);
   return { req, finding };
 }
 

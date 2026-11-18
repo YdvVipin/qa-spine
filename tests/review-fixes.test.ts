@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TraceStore } from '../src/trace/store.ts';
+import { passingTest } from './support.ts';
 import { requirementStatus } from '../src/release.ts';
 import { recordAnswer } from '../src/audit.ts';
 import { validateFixture, loadLocale } from '../src/fixtures.ts';
@@ -27,8 +28,7 @@ function withDir(fn: (dir: string) => void) {
 test('requirementStatus applies the human-answers policy, so it cannot contradict the gate', () => {
   const store = new TraceStore(':memory:');
   const req = store.record({ type: 'requirement', sourceRef: 'PROJ-9', content: { text: 'r' }, provenance: human });
-  const tc = store.record({ type: 'test_case', content: { name: 't' }, provenance: human, links: [{ to: req.id, relation: 'covers' }] });
-  store.record({ type: 'test_run', content: { status: 'passed' }, provenance: human, links: [{ to: tc.id, relation: 'verifies' }] });
+  passingTest(store, req.id);
   const finding = store.record({ type: 'finding', content: { question: 'q?' }, provenance: ai, links: [{ to: req.id, relation: 'derived_from' }] });
   recordAnswer(store, { findingId: finding.id, answer: 'AI says so.', provenance: ai });
   assert.equal(requirementStatus(store)[0].status, 'clear');
@@ -60,19 +60,21 @@ function gate(args: string[], db: string) {
     return err.stdout as string;
   }
 }
-test('the override hint appears only when an override would unblock, and warnings stay warnings', () => withDir((dir) => {
+test('the override hint appears only when an override would unblock', () => withDir((dir) => {
   const db = join(dir, 'trace.db');
   const store = new TraceStore(db);
-  const req = store.record({ type: 'requirement', sourceRef: 'PROJ-1', content: { text: 'r' }, provenance: human });
-  store.record({ type: 'finding', content: { question: 'How quick?' }, provenance: ai, links: [{ to: req.id, relation: 'derived_from' }] });
+  for (const ref of ['PROJ-1', 'PROJ-2']) {
+    const req = store.record({ type: 'requirement', sourceRef: ref, content: { text: 'r' }, provenance: human });
+    store.record({ type: 'finding', content: { question: 'How quick?' }, provenance: ai, links: [{ to: req.id, relation: 'derived_from' }] });
+    if (ref === 'PROJ-1') passingTest(store, req.id);
+  }
   store.close();
-  const warnOnly = gate(['--changed', 'PROJ-1'], db);
-  assert.match(warnOnly, /To ship anyway/, 'an open question alone: an override does unblock');
-  assert.match(warnOnly, /1 changed requirement has no tests\*\*:/, 'untested is a warning here');
-  assert.doesNotMatch(warnOnly, /add a test to clear/);
-  const coverage = gate(['--changed', 'PROJ-1', '--require-coverage'], db);
-  assert.match(coverage, /add a test to clear; an override does not/);
-  assert.doesNotMatch(coverage, /To ship anyway/, 'an override cannot clear missing coverage');
+  const questionOnly = gate(['--changed', 'PROJ-1'], db);
+  assert.match(questionOnly, /To ship anyway/, 'an open question alone: an override does unblock');
+  assert.doesNotMatch(questionOnly, /no tests/);
+  const untested = gate(['--changed', 'PROJ-2'], db);
+  assert.match(untested, /add a test to clear; an override does not/);
+  assert.doesNotMatch(untested, /To ship anyway/, 'an override cannot clear missing coverage');
 }));
 
 // 4. inherited object keys are not fields

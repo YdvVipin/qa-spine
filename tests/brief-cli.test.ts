@@ -88,6 +88,6 @@ test('brief given a valid verdict id exits 0 and emits HTML', () => {
     const { code, stdout } = runBrief([verdict.id], db);
     assert.equal(code, 0);
     assert.match(stdout, /^<!doctype html>/i);
-    assert.match(stdout, /Cleared to ship/);
+    assert.match(stdout, /Ready to ship/);
   });
 });

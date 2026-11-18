@@ -2,17 +2,18 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs } from 'node:util';
-import { TraceStore, assertRawRecordAllowed, currentRequirements, recordRequirement } from './trace/store.ts';
+import { TraceStore, assertRawRecordAllowed, currentRequirements, explainWriteError, recordRequirement } from './trace/store.ts';
 import { fixturesRequest, submitFixtures } from './fixtures.ts';
 import { ArtifactType, ProvenanceInput, Relation } from './trace/schema.ts';
 import {
   auditRequirement,
   loadRubric,
+  rubricPath,
   submitFindings,
   AuditFinding,
   openQuestions,
@@ -80,7 +81,8 @@ export function createServer(store: TraceStore) {
     {
       description:
         'Load a locale pack (phone and postcode formats, currency) and instructions for generating ' +
-        'test data. Makes no model call: generate the data yourself, then record it with fixtures_submit.',
+        'test data. Returns the pack and the instructions. Makes no model call: generate the data ' +
+        'yourself, then record it with fixtures_submit.',
       inputSchema: { locale: z.string().describe('e.g. en-US, en-GB, de-DE, en-IN.') },
     },
     ({ locale }) => {
@@ -99,12 +101,12 @@ export function createServer(store: TraceStore) {
         'Record generated test data for a test case or requirement. Every fixture is validated ' +
         'against `schema` (a JSON Schema subset; unsupported keywords are refused) and the ' +
         "locale's formats; one bad fixture rejects the submission. `promptVersion` is set by the " +
-        'server from the locale pack.',
+        'server from the locale pack. Returns the recorded fixture id.',
       inputSchema: {
         schema: z.record(z.string(), z.unknown()).describe('The JSON Schema every fixture must satisfy.'),
-        locale: z.string(),
+        locale: z.string().describe('The pack the data follows, as given to fixtures_request, e.g. en-GB.'),
         fixtures: z.array(z.unknown()).describe('The generated records.'),
-        forId: z.string().describe('The test case or requirement the data is for.'),
+        forId: z.string().describe('The artifact id of the test case or requirement the data is for, e.g. test_case_1a2b3c4d.'),
         provenance: ProvenanceInput.describe('Who generated these. AI must give `model`.'),
       },
     },
@@ -120,7 +122,9 @@ export function createServer(store: TraceStore) {
   server.registerTool(
     'health',
     {
-      description: 'Check that the qa-spine server is running and report trace store status.',
+      description:
+        'Check that the qa-spine server is running. Returns `ok`, the qa-spine `version`, the store ' +
+        'path (`db`) and how many artifacts it holds.',
       inputSchema: {},
     },
     () => json({ ok: true, version: VERSION, db: dbPath(), artifacts: store.list(undefined, 1e9).length }),
@@ -133,10 +137,13 @@ export function createServer(store: TraceStore) {
         'Append an artifact to the trace store, optionally linking it to existing artifacts. ' +
         'The store is append-only: to correct a requirement, record it again with the same sourceRef. ' +
         'Withdrawing something recorded by mistake is for a person to do, with `qa-spine retract`; ' +
-        'there is no tool for it. A test_run that did not fail clears a failure only when ' +
-        '`provenance.approvedBy` names who vouches for it.',
+        'there is no tool for it. A test_run `status` must be one of passed, failed, error, skipped, ' +
+        'blocked, not_run, cancelled, unknown (`completed` is refused); a pass written here counts only ' +
+        'when `provenance.approvedBy` names who vouches for it. Automated results belong in ' +
+        '`qa-spine ingest-junit`. A failed run may carry the bug that tracks it as ' +
+        '`content.defect`: {key: "ABC-123", url?, state?}. Returns the recorded artifact, with its id.',
       inputSchema: {
-        type: ArtifactType,
+        type: ArtifactType.describe('What is being recorded: requirement, test_case, test_run, and so on.'),
         sourceRef: z
           .string()
           .optional()
@@ -156,7 +163,7 @@ export function createServer(store: TraceStore) {
         assertRawRecordAllowed(store, args);
         return json(recordRequirement(store, args));
       } catch (err) {
-        return fail(err instanceof Error ? err.message : String(err));
+        return fail(explainWriteError(err));
       }
     },
   );
@@ -167,9 +174,9 @@ export function createServer(store: TraceStore) {
       description:
         'Given an artifact ID, return the full upstream and downstream chain with provenance ' +
         'intact — e.g. from a release verdict back to the requirement finding that predicted it. ' +
-        'Omit the ID to list recent artifacts.',
+        'Omit the ID to list recent artifacts. Returns the chain, or `{artifacts: [...]}` for a listing.',
       inputSchema: {
-        artifactId: z.string().optional(),
+        artifactId: z.string().optional().describe('The artifact to start from, e.g. verdict_1a2b3c4d. Omit to list.'),
         type: ArtifactType.optional().describe('Filter the listing when no artifactId is given.'),
       },
     },
@@ -188,7 +195,7 @@ export function createServer(store: TraceStore) {
         'This tool makes no model call: reason over what it returns, then record what you find ' +
         'with `audit_submit`. Emit questions for a human, never a rewritten requirement.',
       inputSchema: {
-        requirementId: z.string().describe('The artifact id of the requirement to audit.'),
+        requirementId: z.string().describe('The artifact id of the requirement to audit, e.g. requirement_1a2b3c4d.'),
       },
     },
     ({ requirementId }) => {
@@ -209,9 +216,10 @@ export function createServer(store: TraceStore) {
         'no internal identifiers or system terminology; if any finding fails any check the whole ' +
         'submission is rejected and nothing is written. `promptVersion` is set by the server from ' +
         'the rubric version, not by the caller. Submit an empty list when no rule fires: that ' +
-        'records a clean audit, which is what clears a requirement edited since it was audited.',
+        'records a clean audit, which is what clears a requirement edited since it was audited. ' +
+        'Returns `{recorded: [ids]}`; next, a person answers each question (audit_open, audit_answer).',
       inputSchema: {
-        requirementId: z.string(),
+        requirementId: z.string().describe('The requirement the findings are about, e.g. requirement_1a2b3c4d.'),
         findings: z.array(AuditFinding).describe('Empty when no rule fires: that records a clean audit.'),
         provenance: ProvenanceInput.describe('Who produced these. AI must give `model`.'),
       },
@@ -231,9 +239,10 @@ export function createServer(store: TraceStore) {
       description:
         'List ambiguity questions still waiting on an answer. Each carries the rule it came ' +
         'from, the quoted span, and the requirement text needed to answer it, so no second ' +
-        'call is required. Omit requirementId for everything outstanding.',
+        'call is required. Omit requirementId for everything outstanding. Returns the list; answer ' +
+        'each with audit_answer.',
       inputSchema: {
-        requirementId: z.string().optional().describe('Limit to one requirement.'),
+        requirementId: z.string().optional().describe('Limit to one requirement, e.g. requirement_1a2b3c4d.'),
       },
     },
     ({ requirementId }) => {
@@ -252,10 +261,10 @@ export function createServer(store: TraceStore) {
         'Answer an open ambiguity question. The answer supersedes the finding, which retires ' +
         'it. Rejects a blank answer, an id that is not a finding, and a finding something has ' +
         'already resolved. Your provenance is recorded as given and is not rewritten: an ' +
-        'answer produced by AI stays visibly an AI answer.',
+        'answer produced by AI stays visibly an AI answer. Returns the recorded answer.',
       inputSchema: {
-        findingId: z.string().describe('The finding whose question you are answering.'),
-        answer: z.string().describe('The answer, in full. Blank answers are rejected.'),
+        findingId: z.string().describe('The finding whose question you are answering, e.g. finding_1a2b3c4d.'),
+        answer: z.string().describe('The answer, in full, e.g. "Within three business days." Blank answers are rejected.'),
         provenance: ProvenanceInput.describe(
           'Who is answering. AI must give `model` and `promptVersion`.',
         ),
@@ -274,13 +283,14 @@ export function createServer(store: TraceStore) {
     'assess_release_risk',
     {
       description:
-        'Given the areas a release touches, return every unresolved requirement-stage finding ' +
-        'and every covering test whose latest run failed on those areas, any flaky tests there, ' +
-        '(a test case a newer one supersedes is judged by its replacement; a pass recorded by a ' +
-        'human does not clear an earlier failure without a named override), ' +
-        'plus the surrounding artifacts as unscored evidence. Makes no model ' +
-        'call: reason over what it returns, then record your brief with `release_submit`. ' +
-        'Every signal blocks a ship verdict.',
+        'Assess the areas a release touches. Returns `decision` (SHIP; HOLD, a known blocker; or ' +
+        'UNKNOWN, evidence missing) with `reasons` (UNANSWERED_FINDING, FAILED_TEST, SCOPE_UNRESOLVED, ' +
+        'NO_TEST, NO_REQUIRED_RUN, SKIPPED_REQUIRED_TEST, INVALID_STATUS, STALE_AUDIT), every ' +
+        'unresolved finding and failing covering test on those areas, flaky tests, and the ' +
+        'surrounding artifacts as unscored evidence. A test case a newer one supersedes is judged by ' +
+        'its replacement; a pass written by hand counts only with a person named in approvedBy. Makes ' +
+        'no model call: reason over it, then record your brief with `release_submit`. Only SHIP, or a ' +
+        'HOLD with a named override, can be recorded as ship; UNKNOWN cannot be overridden.',
       inputSchema: {
         changed: z
           .array(z.string())
@@ -290,6 +300,8 @@ export function createServer(store: TraceStore) {
           .string()
           .optional()
           .describe('e.g. release/2026.7.3. Becomes the verdict sourceRef on submit.'),
+        commit: z.string().optional().describe('Only test runs on this commit count, e.g. 9f2c1ab. Left out, runs on any commit do.'),
+        environment: z.string().optional().describe('Only test runs in this environment count, e.g. staging.'),
       },
     },
     (args) => {
@@ -307,14 +319,15 @@ export function createServer(store: TraceStore) {
     'release_submit',
     {
       description:
-        'Record a release verdict. Signals are recomputed from `changed` and are never taken ' +
-        'from the caller, so a `ship` cannot be waved through by omitting a blocker: it is ' +
-        'rejected while any signal is live unless `override` gives a reason, which is recorded. ' +
-        'Every id in `cites` must exist. Your provenance is recorded as given.',
+        'Record a release verdict. The decision is recomputed from `changed`, never taken from the ' +
+        'caller: `ship` is refused while evidence is missing (UNKNOWN), override or not, and while a ' +
+        'blocker is live (HOLD) unless `override` gives a reason and provenance.approvedBy names who ' +
+        'accepted it. A refusal lists each open reason and how to close it. Every id in `cites` must ' +
+        'exist. Your provenance is recorded as given. Returns the recorded verdict, with its id.',
       inputSchema: {
         releaseRef: z.string().describe('e.g. release/2026.7.3.'),
-        verdict: z.enum(['ship', 'hold']),
-        reason: z.string().describe('The one-page brief. Blank is rejected.'),
+        verdict: z.enum(['ship', 'hold']).describe('What the person decided: ship or hold.'),
+        reason: z.string().describe('The one-page brief, e.g. "All changed stories pass on this build." Blank is rejected.'),
         cites: z
           .array(z.string())
           .describe('Artifact ids the brief refers to. Each becomes a derived_from edge.'),
@@ -322,9 +335,15 @@ export function createServer(store: TraceStore) {
           .array(z.string())
           .min(1)
           .describe('The same list passed to assess_release_risk. Signals are recomputed from it.'),
+        commit: z.string().optional().describe('Only test runs on this commit count, e.g. 9f2c1ab. Left out, runs on any commit do.'),
+        environment: z.string().optional().describe('Only test runs in this environment count, e.g. staging.'),
         override: z
           .object({
-            reason: z.string().describe('Why you are shipping anyway. Blank is rejected.'),
+            reason: z.string().describe('Why you are shipping anyway, e.g. "Hotfix; the refund bug is tracked." Blank is rejected.'),
+            defects: z
+              .array(z.string())
+              .optional()
+              .describe('Jira keys of the bugs that track what ships over, e.g. ["SHOP-91"]. Recorded on the verdict.'),
           })
           .optional()
           .describe(
@@ -388,14 +407,20 @@ export function reviewExport(store: TraceStore): string {
  * stack trace. `parseArgs` is what `gate` already uses, and it rejects an unknown flag
  * on its own. The bare positional stays supported: before `--port` it was the only way.
  */
-export function resolvePort(args: string[]): number {
+/** The port the user asked for, if any: --port, a bare number, or QA_SPINE_PORT. */
+function requestedPort(args: string[]): string | undefined {
   const { values, positionals } = parseArgs({
     args,
-    options: { port: { type: 'string' } },
+    options: { port: { type: 'string' }, 'no-open': { type: 'boolean' } },
     allowPositionals: true,
   });
   const raw = values.port ?? positionals[0] ?? process.env.QA_SPINE_PORT;
-  if (raw === undefined || raw === '') return 4700;
+  return raw === '' ? undefined : raw;
+}
+
+export function resolvePort(args: string[]): number {
+  const raw = requestedPort(args);
+  if (raw === undefined) return 4700;
   // Node's own accepted range, checked here so the message names the bad value.
   if (!/^\d+$/.test(raw) || Number(raw) > 65535) {
     throw new Error(`invalid port: ${raw} (expected 0-65535)`);
@@ -425,6 +450,7 @@ usage: qa-spine [subcommand]
   demo [--port N]         seed a throwaway store and open the Inspector
   inspect [--port N]      browse the trace store in the Inspector
   record                  append an artifact (JSON payload on stdin)
+                          (--batch: one JSON object per line, all or nothing)
   brief <verdictId>       render a release verdict as self-contained HTML
   audit-requirement <id>  load a requirement plus the ambiguity rubric
   audit-submit            record audit findings (JSON payload on stdin)
@@ -436,7 +462,8 @@ usage: qa-spine [subcommand]
                           answer an open question (--accept-suggestion to take its default)
   retract <id> --by <name> --reason <why>
                           withdraw something recorded by mistake; retract the retraction to undo
-  gate --changed <ref>    release gate for CI — exit 0 ship, 1 blocked, 2 error
+  gate --changed <ref>    release gate for CI — exit 0 SHIP, 1 HOLD, 2 UNKNOWN or error
+                          (--text <PR title> assesses the ticket keys in it)
   ingest-junit <file>...  record JUnit XML test results — exit 0 recorded, 2 error
   review-export           dump human review labels as JSONL
   merge <other.db>        bring in what another verified store has and this one lacks
@@ -450,7 +477,16 @@ environment:
   QA_SPINE_DB    store path (default .qa-spine/trace.db)
   QA_SPINE_PORT  inspector port (default 4700)`;
 
-const SUBCOMMANDS = new Set([
+/** A subcommand's line in USAGE, with the indented lines that continue it. */
+function usageFor(sub: string): string {
+  const lines = USAGE.split('\n');
+  const start = lines.findIndex((l) => new RegExp(`^  ${sub}\\b`).test(l));
+  if (start < 0) return `qa-spine ${sub}`;
+  const end = lines.findIndex((l, i) => i > start && !/^ {3,}\S/.test(l));
+  return lines.slice(start, end < 0 ? undefined : end).join('\n');
+}
+
+export const SUBCOMMANDS = new Set([
   'init',
   'demo',
   'inspect',
@@ -472,7 +508,54 @@ const SUBCOMMANDS = new Set([
   'merge',
 ]);
 
-if (invokedAsScript()) {
+/**
+ * The line that registers qa-spine with Claude Code. Under `npx` the package sits in npm's
+ * temporary `_npx` cache, a path that can vanish or change between runs, so the line is a
+ * pinned npx command instead; an installed package gets its real, stable path.
+ */
+export function mcpCommand(packageRoot: string, version: string): string {
+  return /[\\/]_npx[\\/]/.test(packageRoot)
+    ? `claude mcp add qa-spine -- npx -y qa-spine@${version}`
+    : `claude mcp add qa-spine -- node ${join(packageRoot, 'dist', 'server.js')}`;
+}
+
+/** The demo opens a browser only for a person at a terminal: never in CI, a pipe, or with --no-open. */
+export function shouldOpenBrowser(o: { isTTY: boolean; env: NodeJS.ProcessEnv; args: string[] }): boolean {
+  return o.isTTY && !o.env.CI && !o.args.includes('--no-open');
+}
+
+/** The platform's own "open this URL" command. */
+export function openCommand(platform: NodeJS.Platform, url: string): [string, string[]] {
+  if (platform === 'darwin') return ['open', [url]];
+  if (platform === 'win32') return ['cmd', ['/c', 'start', '', url]];
+  return ['xdg-open', [url]];
+}
+
+/** A write `init` could not make, as one sentence with the folder and what to do. */
+function initFailure(what: string, err: unknown): string {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  const why = code === 'EACCES' || code === 'EPERM' ? 'permission denied' : code === 'EROFS' ? 'the disk is read-only' : String((err as Error)?.message ?? err);
+  return `could not write ${what} in ${process.cwd()} (${why}). Run qa-spine init from a folder you can write to, usually your project's root.`;
+}
+
+/**
+ * Starts the Inspector. A busy port the user did not choose is not their problem: another free
+ * port is used. A busy port they chose is one sentence naming it and the way out.
+ */
+async function openInspector(store: InstanceType<typeof TraceStore>, port: number, chosen: boolean) {
+  const { startInspector } = await import('./inspector/server.ts');
+  try {
+    return await startInspector(store, port);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+    if (!chosen) return startInspector(store, 0);
+    throw new Error(`port ${port} is in use. Stop whatever is using it, or pick another with --port, e.g. --port ${port + 10}.`);
+  }
+}
+const listeningOn = (server: import('node:http').Server) => (server.address() as import('node:net').AddressInfo).port;
+
+/** Everything the CLI does. Called when this file is the script, and by the `bin`, cli.ts. */
+export async function main(): Promise<void> {
   const subcommand = process.argv[2];
 
   // Resolved before dbPath(): none of these touch a store, so none may create one —
@@ -486,9 +569,16 @@ if (invokedAsScript()) {
     console.log(VERSION);
     process.exit(0);
   }
+  // 2, not 1: to a CI script, gate's 1 means HOLD, so a typo must not read as "blocked".
   if (subcommand !== undefined && !SUBCOMMANDS.has(subcommand)) {
     console.error(`unknown subcommand '${subcommand}'\n\n${USAGE}`);
-    process.exit(1);
+    process.exit(2);
+  }
+  // `<subcommand> --help`: its own lines from the usage screen, before anything opens a store
+  // or reads stdin (record would wait for input, verify would run).
+  if (subcommand !== undefined && process.argv.slice(3).some((a) => a === '--help' || a === '-h')) {
+    console.log(`${usageFor(subcommand)}\n\nAll commands: qa-spine help`);
+    process.exit(0);
   }
 
   // The store creates its own directory when opened, so a command that never opens the
@@ -506,9 +596,14 @@ if (invokedAsScript()) {
         break;
       }
       const store = new TraceStore(path);
-      const { startInspector } = await import('./inspector/server.ts');
-      await startInspector(store, port);
-      console.error(`qa-spine inspector → http://127.0.0.1:${port}  (reading ${path})`);
+      try {
+        const server = await openInspector(store, port, requestedPort(process.argv.slice(3)) !== undefined);
+        console.error(`qa-spine inspector → http://127.0.0.1:${listeningOn(server)}  (reading ${path})`);
+      } catch (err) {
+        console.error(`qa-spine inspect: ${err instanceof Error ? err.message : err}`);
+        store.close();
+        process.exitCode = 1;
+      }
       break;
     }
     case 'merge': {
@@ -572,13 +667,40 @@ if (invokedAsScript()) {
         // ponytail: caller holding stdin open without closing still hangs indefinitely; upgrade path is read timeout
         const chunks: Buffer[] = [];
         for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+        const text = Buffer.concat(chunks).toString('utf8');
+        if (process.argv.slice(3).includes('--batch')) {
+          // One JSON object per line, one process, one transaction: every line is checked as a
+          // single record would be, and any failure names its line and writes nothing.
+          const lines = text.split('\n').map((l, i) => ({ n: i + 1, l: l.trim() })).filter((x) => x.l);
+          if (!lines.length) throw new Error('record --batch read no lines: give one JSON object per line');
+          const payloads = lines.map(({ n, l }) => {
+            try {
+              return { n, p: JSON.parse(l) };
+            } catch {
+              throw new Error(`line ${n}: not valid JSON`);
+            }
+          });
+          const store = new TraceStore(path);
+          const ids = store.transaction(() =>
+            payloads.map(({ n, p }) => {
+              try {
+                assertRawRecordAllowed(store, p);
+                return recordRequirement(store, p).id;
+              } catch (err) {
+                throw new Error(`line ${n}: ${explainWriteError(err)}`);
+              }
+            }),
+          );
+          console.log(JSON.stringify({ ids }));
+          break;
+        }
         const store = new TraceStore(path);
-        const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const payload = JSON.parse(text);
         assertRawRecordAllowed(store, payload);
         console.log(JSON.stringify(recordRequirement(store, payload)));
       } catch (err) {
         // One JSON object on stdout either way, so the caller never parses stderr.
-        console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        console.log(JSON.stringify({ error: explainWriteError(err) }));
         process.exitCode = 1;
       }
       break;
@@ -686,25 +808,32 @@ if (invokedAsScript()) {
       // because its caller parses one object; `brief` puts them on stderr because its output
       // is a document being redirected. Here the real product is the exit code — stdout
       // carries whichever reader was asked for, and a diagnostic must never be mistaken for
-      // either. 0 shippable, 1 blocked, 2 could not tell.
+      // either. 0 SHIP or OVERRIDDEN, 1 HOLD, 2 UNKNOWN or could not run. --advisory exits 0
+      // whatever the decision, and the decision itself still says what it is.
       try {
         const { values } = parseArgs({
           args: process.argv.slice(3),
           options: {
             changed: { type: 'string', multiple: true },
+            text: { type: 'string', multiple: true },
             since: { type: 'string' },
             'release-ref': { type: 'string' },
             record: { type: 'boolean' },
             reason: { type: 'string' },
             'override-reason': { type: 'string' },
+            defect: { type: 'string', multiple: true },
             'approved-by': { type: 'string' },
             'ticket-pattern': { type: 'string' },
             brief: { type: 'string' },
             summary: { type: 'string' },
             json: { type: 'boolean' },
             'block-on-suspect': { type: 'boolean' },
+            // Accepted and ignored: since 0.4 an untested requirement always blocks.
             'require-coverage': { type: 'boolean' },
             'require-human-answers': { type: 'boolean' },
+            commit: { type: 'string' },
+            environment: { type: 'string' },
+            advisory: { type: 'boolean' },
           },
           allowPositionals: false,
         });
@@ -712,24 +841,24 @@ if (invokedAsScript()) {
         // Both spellings, because CI writes one long line and a person writes several.
         const changed = (values.changed ?? []).flatMap((c) => c.split(','));
 
-        if (!!values['override-reason'] !== !!values['approved-by']) {
-          throw new Error('--override-reason and --approved-by must be given together');
-        }
-
         const { runGate, renderSummary } = await import('./gate.ts');
         const store = new TraceStore(path);
         const result = runGate(store, {
           changed,
+          text: values.text,
           since: values.since,
           ticketPattern: values['ticket-pattern'],
           releaseRef: values['release-ref'],
           record: values.record,
           reason: values.reason,
           overrideReason: values['override-reason'],
+          defects: (values.defect ?? []).flatMap((d) => d.split(',')).map((d) => d.trim()).filter(Boolean),
           approvedBy: values['approved-by'],
           briefPath: values.brief,
           blockOnSuspect: values['block-on-suspect'],
-          requireCoverage: values['require-coverage'],
+          commit: values.commit,
+          environment: values.environment,
+          advisory: values.advisory,
           requireHumanAnswers: values['require-human-answers'] || undefined,
           toolVersion: VERSION,
         });
@@ -738,7 +867,7 @@ if (invokedAsScript()) {
         // verdict to a ledger that cannot remove either.
         if (values.summary) writeFileSync(values.summary, renderSummary(result));
         console.log(values.json ? JSON.stringify(result, null, 2) : renderSummary(result));
-        process.exitCode = result.shippable ? 0 : 1;
+        process.exitCode = values.advisory ? 0 : { SHIP: 0, OVERRIDDEN: 0, HOLD: 1, UNKNOWN: 2 }[result.decision];
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 2;
@@ -857,11 +986,26 @@ if (invokedAsScript()) {
           options: {
             'run-ref': { type: 'string' },
             commit: { type: 'string' },
+            environment: { type: 'string' },
             'ticket-pattern': { type: 'string' },
+            map: { type: 'string' },
           },
           allowPositionals: true,
         });
-        if (!positionals.length) throw new Error('usage: qa-spine ingest-junit <report.xml>... [--run-ref URL] [--commit SHA]');
+        if (!positionals.length) {
+          throw new Error('usage: qa-spine ingest-junit <report.xml>... [--run-ref URL] [--commit SHA] [--environment NAME] [--map tests.json]');
+        }
+        const { ingestJunit, parseTestMap } = await import('./junit.ts');
+        let map;
+        if (values.map) {
+          let json: string;
+          try {
+            json = readFileSync(values.map, 'utf8');
+          } catch (err) {
+            throw new Error(`cannot read ${values.map}: ${err instanceof Error ? err.message : err}`);
+          }
+          map = parseTestMap(json, values.map);
+        }
 
         const reports = positionals.map((file) => {
           try {
@@ -882,12 +1026,13 @@ if (invokedAsScript()) {
           }
         }
 
-        const { ingestJunit } = await import('./junit.ts');
         const store = new TraceStore(path);
         const result = ingestJunit(store, {
           reports,
           runRef: values['run-ref'],
           commit,
+          environment: values.environment,
+          map,
           ticketPattern: values['ticket-pattern'],
           toolVersion: VERSION,
         });
@@ -916,7 +1061,7 @@ if (invokedAsScript()) {
           copyFileSync(resolve(packageRoot, 'rubrics', 'ambiguity.json'), rubricDest);
           console.log('✓ rubrics/ambiguity.json — yours now, edit and commit it');
         } catch (err) {
-          console.error(`could not write rubrics/ambiguity.json: ${err instanceof Error ? err.message : err}`);
+          console.error(initFailure('rubrics/ambiguity.json', err));
           failed = true;
         }
       }
@@ -935,16 +1080,21 @@ if (invokedAsScript()) {
           console.log(`✓ .gitignore += ${ENTRY}`);
         }
       } catch (err) {
-        console.error(`could not update .gitignore: ${err instanceof Error ? err.message : err}`);
+        console.error(initFailure('.gitignore', err));
         failed = true;
       }
 
-      // 3. The MCP line. The path is inside node_modules and differs per install —
-      // nobody should have to go and find it.
+      // 3. The MCP line: nobody should have to go and find the path.
       console.log('\nRegister with Claude Code:');
-      console.log(`  claude mcp add qa-spine -- node ${resolve(packageRoot, 'dist', 'server.js')}`);
-      console.log('\nThen: npx qa-spine demo   # see it working — writes only to a temp file');
-      console.log('Set QA_SPINE_RUBRICS to use rubrics from somewhere other than ./rubrics.');
+      console.log(`  ${mcpCommand(packageRoot, VERSION)}`);
+      console.log(`\nAudits use ${rubricPath()}. Set QA_SPINE_RUBRICS to read rubrics from another directory.`);
+      // 4. The way to a first decision, so the next command is never a search through the README.
+      console.log(`
+Next, to reach a first release decision:
+  1. npx qa-spine demo                          a worked example, in a throwaway store
+  2. npx qa-spine record < story.json           your stories (or the Jira, GitHub and Linear importers in the README)
+  3. npx qa-spine ingest-junit reports/*.xml    your test results
+  4. npx qa-spine gate --changed PROJ-42        SHIP, HOLD or UNKNOWN, and why`);
 
       if (failed) process.exitCode = 1;
       break;
@@ -965,8 +1115,10 @@ if (invokedAsScript()) {
       // QA_SPINE_DB is deliberately ignored: the point of the demo is that it does not
       // write where your data lives. The ledger is append-only, so a demo seeded into a
       // real store would be permanent.
-      const demoDb = join(tmpdir(), 'qa-spine-demo.db');
-      const briefPath = join(tmpdir(), 'qa-spine-demo-brief.html');
+      // Its own folder per run, deleted on Ctrl-C: a demo leaves nothing behind.
+      const demoDir = mkdtempSync(join(tmpdir(), 'qa-spine-demo-'));
+      const demoDb = join(demoDir, 'trace.db');
+      const briefPath = join(demoDir, 'brief.html');
 
       let demo: { store: InstanceType<typeof TraceStore>; verdictId: string };
       try {
@@ -975,17 +1127,44 @@ if (invokedAsScript()) {
       } catch (err) {
         // Fail before starting the Inspector — nobody should be shown a half-built store.
         console.error(`demo failed while seeding: ${err instanceof Error ? err.message : err}`);
+        rmSync(demoDir, { recursive: true, force: true });
         process.exitCode = 1;
         break;
       }
 
-      const { startInspector } = await import('./inspector/server.ts');
-      await startInspector(demo.store, port);
+      let server: import('node:http').Server;
+      try {
+        server = await openInspector(demo.store, port, requestedPort(process.argv.slice(3)) !== undefined);
+      } catch (err) {
+        console.error(`qa-spine demo: ${err instanceof Error ? err.message : err}`);
+        demo.store.close();
+        rmSync(demoDir, { recursive: true, force: true });
+        process.exitCode = 1;
+        break;
+      }
+      const stop = () => {
+        server.close();
+        demo.store.close();
+        rmSync(demoDir, { recursive: true, force: true });
+        process.exit(0);
+      };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
 
-      console.log(`seeded ${demoDb}`);
+      const base = `http://127.0.0.1:${listeningOn(server)}`;
+      const { DEMO_RELEASES } = await import('./demo.ts');
+      const link = (r: (typeof DEMO_RELEASES)[number]) => `${base}/?release=${encodeURIComponent(r.release)}&changed=${r.changed.join(',')}`;
+      console.log(`store  ${demoDb}`);
       console.log(`brief  ${briefPath}`);
-      console.log(`\nqa-spine inspector → http://127.0.0.1:${port}`);
-      console.log('\nA throwaway store — your own data is untouched. Ctrl-C to stop.');
+      console.log(`\nqa-spine demo → ${base}`);
+      console.log('\nThe Release page, one example of each kind:');
+      for (const r of DEMO_RELEASES) console.log(`  ${r.label.padEnd(15)} ${link(r)}`);
+      console.log('\nA throwaway store; your own data is untouched. Ctrl-C stops the demo and deletes it.');
+      // The Not ready example: the one where every decision, Ship anyway included, can be tried.
+      if (shouldOpenBrowser({ isTTY: !!process.stdout.isTTY, env: process.env, args: process.argv.slice(3) })) {
+        const [cmd, args] = openCommand(process.platform, link(DEMO_RELEASES[1]));
+        spawn(cmd, args, { detached: true, stdio: 'ignore' }).on('error', () => {}).unref();
+      }
       break;
     }
 
@@ -995,3 +1174,5 @@ if (invokedAsScript()) {
     }
   }
 }
+
+if (invokedAsScript()) await main();

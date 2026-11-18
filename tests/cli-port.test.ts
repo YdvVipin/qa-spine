@@ -19,6 +19,8 @@ function run(args: string[], env: NodeJS.ProcessEnv = {}) {
       cwd: dir,
       encoding: 'utf8',
       env: { ...process.env, QA_SPINE_DB: join(dir, 'trace.db'), ...env },
+      // Every case here should exit at once; a server that starts instead must fail, not hang the suite.
+      timeout: 15_000,
     });
     return { code: 0, err: '' };
   } catch (err: any) {
@@ -46,7 +48,7 @@ test('resolvePort reads --port, a bare positional, the env var, then the default
 
 test('resolvePort rejects what would otherwise reach listen() as NaN', () => {
   // The exact regression: Number('--port') is NaN, and NaN reached server.listen().
-  assert.throws(() => resolvePort(['--no-open']), /Unknown option/);
+  assert.throws(() => resolvePort(['--no-such-flag']), /Unknown option/);
   assert.throws(() => resolvePort(['abc']), /invalid port: abc/);
   assert.throws(() => resolvePort(['--port', 'abc']), /invalid port: abc/);
   assert.throws(() => resolvePort(['70000']), /invalid port: 70000/);
@@ -60,7 +62,7 @@ test('inspect rejects a bad port with a message, not a RangeError stack', () => 
 });
 
 test('demo rejects an unknown flag before it seeds anything', () => {
-  const { code, err } = run(['demo', '--no-open']);
+  const { code, err } = run(['demo', '--no-such-flag']);
   assert.equal(code, 1);
   assert.match(err, /qa-spine demo: .*Unknown option/);
   assert.doesNotMatch(err, /RangeError|ERR_SOCKET_BAD_PORT/, 'must not crash out of listen()');

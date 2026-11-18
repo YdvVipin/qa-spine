@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Artifact, Edge, Provenance, type Chain, type Relation } from './schema.ts';
+import { Artifact, Edge, Provenance, RUN_STATUSES, defectProblem, type Chain, type Relation } from './schema.ts';
 
 /**
  * Append-only trace store. Enforcement lives in SQLite triggers rather than in this
@@ -101,6 +101,17 @@ const GATED: Partial<Record<Artifact['type'], string>> = {
  * ponytail: code that imports TraceStore directly is not guarded, the same trust boundary as
  * opening the SQLite file. The hash chain is what catches that after the fact.
  */
+/**
+ * A failed write's reason, for the caller. SQLite's "database is locked" after the 5-second wait
+ * says neither that nothing was written nor what to do; everything else passes through as is.
+ */
+export function explainWriteError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return /database is locked|SQLITE_BUSY/i.test(message)
+    ? 'the trace store is busy: another process kept it locked for 5 seconds. Nothing was written; run the command again.'
+    : message;
+}
+
 export function assertRawRecordAllowed(
   store: TraceStore,
   input: { type: Artifact['type']; links?: { to: string; relation: Relation }[]; provenance?: { tool?: string } },
@@ -226,6 +237,16 @@ export class TraceStore {
       provenance: input.provenance,
       createdAt: new Date().toISOString(),
     });
+    // Here rather than in each writer, so ingest, `record`, `trace_record` and the importers
+    // cannot disagree. mergeFrom bypasses it on purpose: an old store's rows still merge, and
+    // the gate reads an unknown status as UNKNOWN.
+    if (artifact.type === 'test_run' && !(RUN_STATUSES as readonly unknown[]).includes(artifact.content.status)) {
+      throw new Error(`test_run status ${JSON.stringify(artifact.content.status)} is not one of ${RUN_STATUSES.join(', ')}`);
+    }
+    if (artifact.type === 'test_run' && artifact.content.defect !== undefined) {
+      const problem = defectProblem(artifact.content.defect);
+      if (problem) throw new Error(problem);
+    }
 
     this.insertArtifact(artifact, input.links ?? []);
     return artifact;
@@ -319,8 +340,28 @@ export class TraceStore {
    * then writes cannot wait for another writer — SQLite fails the upgrade at once rather than
    * risk a deadlock, and busy_timeout never applies.
    */
+  /**
+   * All of fn or none of it. Nests: inside another transaction it is a savepoint, so a caller
+   * that already holds one (record --batch) can use helpers that open their own.
+   */
   transaction<T>(fn: () => T): T {
+    if (this.depth > 0) {
+      const name = `nested_${this.depth}`;
+      this.db.exec(`SAVEPOINT ${name}`);
+      this.depth++;
+      try {
+        const result = fn();
+        this.db.exec(`RELEASE ${name}`);
+        return result;
+      } catch (err) {
+        this.db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`);
+        throw err;
+      } finally {
+        this.depth--;
+      }
+    }
     this.db.exec('BEGIN IMMEDIATE');
+    this.depth++;
     try {
       const result = fn();
       this.db.exec('COMMIT');
@@ -328,8 +369,11 @@ export class TraceStore {
     } catch (err) {
       this.db.exec('ROLLBACK');
       throw err;
+    } finally {
+      this.depth--;
     }
   }
+  private depth = 0;
 
   link(from: string, to: string, relation: Relation): Edge {
     return this.insertEdge(from, to, relation, new Date().toISOString());
@@ -526,6 +570,14 @@ export class TraceStore {
       )
       .all(...(asOf ? [id, asOf] : [id])) as Row[];
     return rows.map(toArtifact).find((r) => !this.retractionOf(r.id, asOf));
+  }
+
+  /** Whether artifact `id` was written to this store after `ref`. Insertion order, not createdAt: two writes can share a millisecond. */
+  insertedAfter(id: string, ref: string): boolean {
+    const row = this.db
+      .prepare('SELECT (SELECT rowid FROM artifacts WHERE id = ?) > (SELECT rowid FROM artifacts WHERE id = ?) AS after')
+      .get(id, ref) as { after: number | null } | undefined;
+    return row?.after === 1;
   }
 
   isRetracted(id: string, asOf?: string): boolean {

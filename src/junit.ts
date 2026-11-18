@@ -162,7 +162,38 @@ export type IngestResult = {
   uncovered: string[];
   /** Tests that named no key at all. Recorded, but they can never block anything. */
   unkeyed: number;
+  /** With a map: its entries that matched no test in these reports — usually a renamed test. */
+  unusedMapEntries?: string[];
 };
+
+/** Test name, or `classname::name`, to the requirement keys it covers. */
+export type TestMap = Map<string, string[]>;
+
+/**
+ * Reads a --map file: `{"<name>" or "<classname>::<name>": "KEY" or ["KEY", ...]}`. For suites
+ * whose test names carry no ticket key. Anything malformed is an error naming the entry, before
+ * a report is read: a map half-applied would link some tests and silently leave the rest.
+ */
+export function parseTestMap(json: string, file: string): TestMap {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch (err) {
+    throw new Error(`${file} is not valid JSON: ${err instanceof Error ? err.message : err}`);
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${file} must be an object of test name to requirement key, e.g. {"refund email is sent": "PROJ-7"}`);
+  }
+  const map: TestMap = new Map();
+  for (const [test, value] of Object.entries(raw)) {
+    const keys = typeof value === 'string' ? [value] : value;
+    if (!Array.isArray(keys) || !keys.length || keys.some((k) => typeof k !== 'string' || !k.trim())) {
+      throw new Error(`${file}: ${JSON.stringify(test)} must map to a key or a list of keys, e.g. "PROJ-7" or ["PROJ-7", "PROJ-8"]`);
+    }
+    map.set(test, keys.map((k: string) => k.trim()));
+  }
+  return map;
+}
 
 /**
  * Records a set of JUnit reports as `test_case` and `test_run` artifacts. Every report is
@@ -181,10 +212,15 @@ export function ingestJunit(
     ticketPattern?: string;
     runRef?: string;
     commit?: string;
+    /** Where the tests ran, e.g. staging. A gate given --environment counts only runs that say so. */
+    environment?: string;
+    /** Extra keys per test, for names that carry none. Added to what the name says, never instead of it. */
+    map?: TestMap;
     toolVersion?: string;
   },
 ): IngestResult {
   const pattern = input.ticketPattern ?? DEFAULT_TICKET_PATTERN;
+  const usedMapEntries = new Set<string>();
   const cases = input.reports.flatMap(({ file, xml }) => {
     try {
       return parseJunit(xml, pattern);
@@ -192,6 +228,16 @@ export function ingestJunit(
       throw new Error(`${file}: ${err instanceof Error ? err.message : err}`);
     }
   });
+  if (input.map) {
+    for (const c of cases) {
+      for (const entry of [`${c.classname}::${c.name}`, c.name]) {
+        const keys = input.map.get(entry);
+        if (!keys) continue;
+        usedMapEntries.add(entry);
+        c.keys = [...new Set([...c.keys, ...keys])];
+      }
+    }
+  }
   if (!cases.length) {
     throw new Error('no <testcase> in any report — a report of no tests is not a clean run');
   }
@@ -242,6 +288,25 @@ export function ingestJunit(
         }
       }
 
+      // A named run delivering its report again (a CI retry after a timeout) is one result,
+      // not two. Only for an explicit --run-ref: the default, the file name, repeats across
+      // every local run. A re-run with a different outcome needs its own ref (the Action adds
+      // the attempt number), so the same ref saying something else is refused, not appended.
+      const replayed = input.runRef?.trim()
+        ? store
+            .linkedFrom(testCase.id, 'verifies', 'test_run')
+            .find((r) => r.content.runRef === runRef && r.content.commit === input.commit && r.content.environment === input.environment)
+        : undefined;
+      if (replayed) {
+        if (replayed.content.status !== c.status) {
+          throw new Error(
+            `run ${runRef} already recorded "${c.name}" as ${replayed.content.status}, and this report says ${c.status} — ` +
+              'give a re-run its own --run-ref',
+          );
+        }
+        return { testCaseId: testCase.id, testRunId: replayed.id, name: c.name, status: c.status, flaky: replayed.content.flaky === true };
+      }
+
       const flaky = c.statuses.has('passed') && (c.statuses.has('failed') || c.statuses.has('error'));
       const run = store.record({
         type: 'test_run',
@@ -252,6 +317,7 @@ export function ingestJunit(
           ...(c.time ? { time: c.time } : {}),
           runRef,
           ...(input.commit ? { commit: input.commit } : {}),
+          ...(input.environment ? { environment: input.environment } : {}),
           ...(flaky ? { flaky: true } : {}),
         },
         provenance,
@@ -261,5 +327,10 @@ export function ingestJunit(
     }),
   );
 
-  return { runs, uncovered: [...uncovered], unkeyed };
+  return {
+    runs,
+    uncovered: [...uncovered],
+    unkeyed,
+    ...(input.map ? { unusedMapEntries: [...input.map.keys()].filter((e) => !usedMapEntries.has(e)) } : {}),
+  };
 }

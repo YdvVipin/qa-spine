@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runDemo } from '../src/demo.ts';
+import { mcpCommand } from '../src/server.ts';
 
 const REPO = process.cwd();
 
@@ -123,6 +124,53 @@ test('init prints an mcp line naming a server.js that exists', () => {
   });
 });
 
+test('under npx, the mcp line is a pinned npx command, not a path into the temporary npx cache', () => {
+  const cache = '/home/u/.npm/_npx/1a2b3c/node_modules/qa-spine';
+  assert.equal(mcpCommand(cache, '0.4.0'), 'claude mcp add qa-spine -- npx -y qa-spine@0.4.0');
+  assert.equal(mcpCommand('C:\\Users\\u\\AppData\\Local\\npm-cache\\_npx\\9f\\node_modules\\qa-spine', '0.4.0'), 'claude mcp add qa-spine -- npx -y qa-spine@0.4.0');
+  const installed = '/home/u/project/node_modules/qa-spine';
+  assert.equal(mcpCommand(installed, '0.4.0'), `claude mcp add qa-spine -- node ${join(installed, 'dist', 'server.js')}`);
+});
+
+test('init ends with the steps to a first release decision', () => {
+  withScratch((dir) => {
+    const { out } = run(['init'], dir);
+    const next = out.slice(out.indexOf('Next'));
+    for (const step of ['npx qa-spine demo', 'npx qa-spine record', 'npx qa-spine ingest-junit', 'npx qa-spine gate --changed']) {
+      assert.ok(next.includes(step), `missing "${step}" in:\n${next}`);
+    }
+  });
+});
+
+test('init in a folder it cannot write to says where and what to do, in one sentence per problem', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, () => {
+  withScratch((dir) => {
+    chmodSync(dir, 0o555);
+    try {
+      // Through the bin, the way a user runs it.
+      const r = spawnSync('node', [resolve(REPO, 'src/cli.ts'), 'init'], { cwd: dir, encoding: 'utf8', env: { ...process.env, QA_SPINE_DB: join(dir, 'x', 'trace.db') } });
+      assert.equal(r.status, 1);
+      const lines = r.stderr.trim().split('\n');
+      const err = r.stderr;
+      assert.equal(lines.length, 2, err);
+      for (const line of lines) {
+        assert.ok(line.includes(dir), `names the folder: ${line}`);
+        assert.match(line, /Run qa-spine init from a folder you can write to/);
+        assert.doesNotMatch(line, /EACCES|mkdir|open '/, `no raw system error: ${line}`);
+      }
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+  });
+});
+
+test('the bin does not print SQLite\'s experimental-feature warning at a new user', () => {
+  withScratch((dir) => {
+    const r = spawnSync('node', [resolve(REPO, 'src/cli.ts'), 'init'], { cwd: dir, encoding: 'utf8', env: { ...process.env, QA_SPINE_DB: join(dir, 'x', 'trace.db') } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /ExperimentalWarning|SQLite is an experimental feature/);
+  });
+});
+
 test('init never creates a store directory', () => {
   withScratch((dir) => {
     run(['init'], dir);
@@ -151,7 +199,8 @@ function withDemo(fn: (db: string, brief: string) => void) {
 test('runDemo seeds the whole arc and writes the brief', () => {
   withDemo((db, brief) => {
     const { store, verdictId } = runDemo(db, brief);
-    assert.equal(store.list(undefined, 1e9).length, 7);
+    // The worked example is 7 artifacts; the three Release page examples add 9.
+    assert.equal(store.list(undefined, 1e9).length, 16);
     assert.ok(verdictId.startsWith('verdict_'));
     assert.ok(existsSync(brief));
   });
@@ -161,7 +210,7 @@ test("the brief reads as a hold and names the open question", () => {
   withDemo((db, brief) => {
     runDemo(db, brief);
     const html = readFileSync(brief, 'utf8');
-    assert.match(html, /Not ready to ship/);
+    assert.match(html, /<h1>Not ready<\/h1>/);
     assert.match(html, /What happens when notification delivery fails\?/);
   });
 });
@@ -169,7 +218,8 @@ test("the brief reads as a hold and names the open question", () => {
 test('the seeded graph is connected — the verdict is reachable from the requirement', () => {
   withDemo((db, brief) => {
     const { store, verdictId } = runDemo(db, brief);
-    const requirement = store.list('requirement', 10)[0];
+    // The worked example's story; the Release page examples are separate stories.
+    const requirement = store.bySourceRef(['PROJ-42']).find((a) => a.type === 'requirement')!;
     const chain = store.chain(requirement.id);
     assert.ok(chain, 'requirement must have a chain');
     assert.equal(chain.nodes.length, 7, 'every artifact should be reachable, not seven islands');
@@ -208,6 +258,6 @@ test('running the demo twice does not stack a second copy', () => {
   withDemo((db, brief) => {
     runDemo(db, brief);
     const { store } = runDemo(db, brief);
-    assert.equal(store.list(undefined, 1e9).length, 7, 'the ledger is append-only — start clean');
+    assert.equal(store.list(undefined, 1e9).length, 16, 'the ledger is append-only — start clean');
   });
 });
