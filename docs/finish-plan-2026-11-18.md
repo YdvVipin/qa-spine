@@ -30,13 +30,11 @@ which I do not edit.
 
 ## Decisions (my default in bold; I go ahead with it unless you say otherwise)
 
-1. **Where a release's scope lives.** Today only a verdict carries a release id, so an undecided
-   release cannot be opened by `?release=<id>`. **Default: one new artifact type, `release`
-   (`sourceRef` = the release id; content `{title, changed[], commit?, environment?}`), written
-   by a new CLI command `qa-spine release define <id> --changed A,B [--title …]`. A second
-   definition supersedes the first, like a requirement version.** No MCP tool is added or renamed.
-   Alternative: carry the scope in the URL (`?release=…&changed=…`), with no new type, but then
-   there is no list of releases and the link is the only record of the scope.
+1. **Where a release's scope lives.** ~~A new `release` artifact type~~. **Changed on 18 Nov,
+   your choice: the stories go in the link** (`?release=1.4&changed=PROJ-1,PROJ-2`), and once
+   decided the verdict carries them. Reason: qa-spine 0.3 and the demo box's build validate
+   every row's type on read, so a new type would make a store unreadable by them and break
+   rollback. Trade-off accepted: an undecided release is listed nowhere until decided.
 2. **Who decides on the Release page.** The Inspector's retract and answer forms already take a
    typed name; signed identity is E4, which is not in this brief. **Default: Ship / Hold / Ship
    anyway record the typed name as a claimed name, and the page says "Recorded as typed; not
@@ -86,7 +84,7 @@ passes either way).
 | # | Item | Change | Proof |
 |---|---|---|---|
 | 3.1 | D4 one wording table | `src/words.ts`: each decision → sentence and colour (Ready to ship / Not ready / Can't tell yet / Shipped anyway), each of the 8 reason codes → one sentence. Gate summary, brief and Release page read it | Test: every code in `REASONS` and every decision has a sentence (fails if one is added without words); existing gate/brief wording tests updated |
-| 3.2 | Release scope | Decision 1 (`release` type, `qa-spine release define`, superseding) | Store and CLI tests: define, redefine supersedes, unknown id → clear 404 message |
+| 3.2 | Release scope | Decision 1 as changed: the link, then the verdict | `release-view.test.ts`: a decided release opens by id alone; an undecided one with no stories is a 404 saying how to open it |
 | 3.3 | D1 `/api/release?release=<id>` | Returns the decision from the one evaluator (never a second computation), the sentence, and three lists: passed, failed (with bug key and who found it), no evidence (what is missing); plus the latest verdict, if any | API test: one release of each kind returns the expected decision and lists; the decision equals `runGate` on the same store |
 | 3.4 | D1 page | Opening the Inspector with `?release=<id>` lands on the Release page; the six engineer views sit behind an "Evidence" link. Rendering is a pure function in `src/inspector/ui/release.js` so a test can read its text | Test: rendered text contains no artifact id, relation name, status code or reason code, for all four states |
 | 3.5 | Ship / Hold / Ship anyway | `POST /api/release/decide`. Ship only when Ready; Hold always; Ship anyway only for Not ready, never Can't tell yet; needs name, reason ≥ 20 characters and ≥ 1 Jira key (decision 3). The page shows exactly what will be recorded before confirming | API tests for each refusal (Ship on Not ready, Ship anyway on Can't tell yet, short reason, no key, blank name) and each success; the verdict carries `override.defects` |
@@ -119,3 +117,23 @@ Filled in as each row lands.
 
 | Task | Commit | Test | Status |
 |---|---|---|---|
+| 1.1 Baseline: tests, build, pack, smoke | none needed | 424 tests; pack = `dist/` (with `inspector/ui`), `rubrics/`, `locales/`, `README.md`; smoke on the tarball | Done |
+| 1.2 A5 by name and by `<property name="requirement">`, real CLI to the gate | `1839041` | `junit-link.test.ts` 1–3 (mutation-checked: removing either path fails them) | Done |
+| 1.3 A5 `--map` | `1839041` | `junit-link.test.ts` 4–7 | Done |
+| 1.4 Action input safety | `7d43fe5` | `ci-input.test.ts` (hostile title as data; the example workflow never puts PR text in a `run:`) | Done |
+| 1.5 Docs: status from git, changelog date, Node 22.13, npx first, honest opening | `b89aafa` | `docs.test.ts` | Done |
+| CI, 3 OS × 4 Node (+ Node 20 / 22.12 refusal) | — | `196f5fb`: all jobs green | Done (re-checked at the end) |
+| 2.1 Node older than 22.13: one sentence, exit 2 | `040f792` | `cli-node-version.test.ts`; CI `old-node` job on real Node 20 and 22.12 | Done |
+| 2.2 `init`: npx MCP line, plain errors, next steps, no SQLite warning | `a4e4c4b` | `cli-init-demo.test.ts` (4 new) | Done |
+| 2.3 `demo`: busy port, Ctrl-C cleanup, answers in 10 s | `26f21c6` | `demo-run.test.ts` | Done |
+| 2.4 `<cmd> --help` for all 19; a typo exits 2 | `cc09bcf` | `cli-help.test.ts` | Done |
+| 2.5 11 MCP tools against 0.4.0 | `196f5fb` | `mcp-tools.test.ts` (names pinned, descriptions, refusals) | Done |
+| 3.1 D4/B3 one vocabulary | `ecd0ba4` | `words.test.ts` | Done |
+| 3.3 D1 data, D5 "changed since" | `bc727ea` | `release-view.test.ts`, `release-api.test.ts` | Done |
+| 3.5 Ship / Hold / Ship anyway rules | `558e064` | `release-api.test.ts`, `mcp-tools.test.ts` (override bug keys) | Done |
+| 3.4 D1 page | `a8dfc21`, `0aa3470` | `release-page.test.ts`; real-browser run (below) | Done |
+| 3.7 D2 demo with three releases | `0aa3470` | `demo-releases.test.ts`, `demo-run.test.ts`, smoke | Done |
+
+Real-browser run (18 Nov, headless Chromium from QAAE's installed Playwright, a scratch script
+not in this repo): 13 checks at 1280 and 375 px, all passed. It found two display faults, both
+fixed in `0aa3470`. It is not part of CI, because Playwright is not a dependency of this repo.
