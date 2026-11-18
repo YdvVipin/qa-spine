@@ -181,6 +181,9 @@ export type IncompleteTest = {
 };
 
 /** Flakiness is judged on the runs that count: a hand-recorded pass cannot make a failure look flaky either. */
+/** A covering test whose deciding run passed. `by` names who vouched for a pass typed in by hand; null when it came from a test report. */
+export type PassingTest = { testCaseId: string; testRunId: string; requirementId: string; name: string; at: string; by: string | null };
+
 export const flakyOn = (runs: Artifact[]): boolean => isFlaky(runs.filter((r) => !isHandRecordedPass(r)));
 
 /** Flaky: ingest saw it pass and fail in one report, or two runs on one commit disagree. */
@@ -433,6 +436,7 @@ export function assessReleaseRisk(
   const flaky: { testCaseId: string; requirementId: string; name: string }[] = [];
   const handEntered: { testCaseId: string; testRunId: string; requirementId: string; name: string; status: string; by: string }[] = [];
   const incomplete: IncompleteTest[] = [];
+  const passing: PassingTest[] = [];
   const testSignals: RiskSignal[] = current.flatMap((req) =>
     coveringTests(store, req).flatMap((tc) => {
       const runs = store.linkedFrom(tc.id, 'verifies', 'test_run');
@@ -461,6 +465,16 @@ export function assessReleaseRisk(
           name,
           status,
           by: String(latest.provenance.approvedBy),
+        });
+      }
+      if (t.state === 'passed') {
+        passing.push({
+          testCaseId: tc.id,
+          testRunId: latest.id,
+          requirementId: req.id,
+          name,
+          at: latest.createdAt,
+          by: ingested(latest) ? null : String(latest.provenance.approvedBy),
         });
       }
       if (t.state !== 'failing') return [];
@@ -563,6 +577,7 @@ export function assessReleaseRisk(
     matched: { requirements: requirements.map((r) => r.id), unmatched },
     signals,
     incomplete,
+    passing,
     flaky,
     handEntered,
     retracted: [...retracted.values()],

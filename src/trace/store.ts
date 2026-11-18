@@ -534,6 +534,14 @@ export class TraceStore {
     return rows.map(toArtifact).find((r) => !this.retractionOf(r.id, asOf));
   }
 
+  /** Whether artifact `id` was written to this store after `ref`. Insertion order, not createdAt: two writes can share a millisecond. */
+  insertedAfter(id: string, ref: string): boolean {
+    const row = this.db
+      .prepare('SELECT (SELECT rowid FROM artifacts WHERE id = ?) > (SELECT rowid FROM artifacts WHERE id = ?) AS after')
+      .get(id, ref) as { after: number | null } | undefined;
+    return row?.after === 1;
+  }
+
   isRetracted(id: string, asOf?: string): boolean {
     return !!this.retractionOf(id, asOf);
   }

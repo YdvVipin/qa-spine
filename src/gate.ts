@@ -9,6 +9,7 @@ import {
   type Decision,
   type FailingTest,
   type IncompleteTest,
+  type PassingTest,
   type ReasonCode,
   type Retracted,
 } from './release.ts';
@@ -78,6 +79,8 @@ export type GateResult = {
   /** Tests on changed areas that failed and passed on the same commit. Information only. */
   /** Covering tests with no result that shows whether they work on this build. */
   incomplete: IncompleteTest[];
+  /** Covering tests whose deciding run passed: the evidence behind a SHIP. */
+  passing: PassingTest[];
   flakyTests: { testCaseId: string; requirementId: string; name: string }[];
   /** Tests whose deciding result was typed in by hand rather than ingested, and who vouched for it. */
   handEntered: { testCaseId: string; testRunId: string; requirementId: string; name: string; status: string; by: string }[];
@@ -97,7 +100,7 @@ export type GateResult = {
  *  under the paths; the complete list still goes onto the verdict. */
 const UNMATCHED_SAMPLE = 5;
 
-class GateError extends Error {}
+export class GateError extends Error {}
 
 function git(args: string[], cwd: string): string {
   try {
@@ -245,6 +248,7 @@ export function runGate(store: TraceStore, opts: GateOptions): GateResult {
     signals,
     failingTests,
     incomplete: assessment.incomplete,
+    passing: assessment.passing,
     flakyTests: assessment.flaky,
     handEntered: assessment.handEntered,
     retracted: assessment.retracted,

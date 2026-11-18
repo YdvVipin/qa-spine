@@ -1,4 +1,6 @@
 import { createServer as createHttpServer, type Server } from 'node:http';
+import { releaseView, ReleaseNotFound } from '../release-view.ts';
+import { GateError } from '../gate.ts';
 import { readFile } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +31,17 @@ function withdrawal(store: TraceStore, a: Artifact) {
  * Bound to loopback only — there is no auth because there is no remote access, which also
  * means the name on a retraction is whatever the person typed.
  */
+/** A release's id and, from the link, its stories and build. */
+function scopeFrom(params: URLSearchParams, release: string) {
+  const changed = (params.get('changed') ?? '').split(',').map((r) => r.trim()).filter(Boolean);
+  return {
+    release,
+    changed,
+    commit: params.get('commit')?.trim() || undefined,
+    environment: params.get('environment')?.trim() || undefined,
+  };
+}
+
 export function createInspector(store: TraceStore): Server {
   return createHttpServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -100,6 +113,20 @@ export function createInspector(store: TraceStore): Server {
           links: [{ to: artifactId, relation: 'reviews' }],
         });
         return send(200, review);
+      }
+
+      // The Release page: ?release=<id>, with the stories in the link while it is undecided.
+      if (req.method === 'GET' && url.pathname === '/api/release') {
+        const release = url.searchParams.get('release')?.trim();
+        if (!release) return send(400, { error: 'say which release: ?release=<id>&changed=PROJ-1,PROJ-2' });
+        try {
+          return send(200, releaseView(store, scopeFrom(url.searchParams, release)));
+        } catch (err) {
+          if (err instanceof ReleaseNotFound) return send(404, { error: err.message });
+          // The gate's own refusals (an empty store, say) are the user's to fix, not a server fault.
+          if (err instanceof GateError) return send(400, { error: err.message });
+          throw err;
+        }
       }
 
       if (req.method === 'GET' && url.pathname === '/api/readiness') {
