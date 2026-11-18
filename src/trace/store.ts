@@ -101,6 +101,17 @@ const GATED: Partial<Record<Artifact['type'], string>> = {
  * ponytail: code that imports TraceStore directly is not guarded, the same trust boundary as
  * opening the SQLite file. The hash chain is what catches that after the fact.
  */
+/**
+ * A failed write's reason, for the caller. SQLite's "database is locked" after the 5-second wait
+ * says neither that nothing was written nor what to do; everything else passes through as is.
+ */
+export function explainWriteError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return /database is locked|SQLITE_BUSY/i.test(message)
+    ? 'the trace store is busy: another process kept it locked for 5 seconds. Nothing was written; run the command again.'
+    : message;
+}
+
 export function assertRawRecordAllowed(
   store: TraceStore,
   input: { type: Artifact['type']; links?: { to: string; relation: Relation }[]; provenance?: { tool?: string } },
