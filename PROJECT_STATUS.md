@@ -15,6 +15,7 @@ what is still open" in one place. Every fact below comes from git, npm or a comm
 | Runtime | Node 22.13 or later (`engines`); working from source needs Node 22.18, for TypeScript without a flag |
 | CI | `.github/workflows/ci.yml`: tests on Node 22.18 / 24 / 26, then one packed tarball smoke-tested on Linux, macOS and Windows under Node 22.13 / 22 / 24 / 26 |
 | The remaining work | [docs/finish-plan-2026-11-18.md](docs/finish-plan-2026-11-18.md), with a task / commit / test / status table |
+| For a release manager | the Release page: `npx qa-spine demo`, or the Inspector opened with `?release=<id>&changed=…` |
 
 ## What it is
 
@@ -61,6 +62,10 @@ src/
   release.ts         796  the evaluator, release risk, verdicts, readiness
   trace/store.ts     697  append-only store: triggers, hash chain, verify, merge, versions
   inspector/ui/app.js 682 the Inspector (vanilla JS, no build step)
+  release-view.ts    250  the Release page's data: one decision, three lists, Ship / Hold / Ship anyway
+  inspector/ui/release.js 155 the Release page itself
+  words.ts            54  one vocabulary: Ready to ship, Not ready, Can't tell yet, Shipped anyway
+  cli.ts              44  the bin: checks Node before loading node:sqlite
   gate.ts            474  `qa-spine gate` and its summary
   audit.ts           367  ambiguity audit, answers, rubric report
   brief.ts           350  a verdict as one self-contained HTML page
@@ -71,7 +76,7 @@ src/
   trace/schema.ts    113  Zod schemas for artifacts, edges, provenance
   export.ts           84  traceability matrix (csv, html), jsonl dump
   retract.ts          57  withdrawing a mistake by name
-tests/               35 files (npm test: 436 tests, all passing on 18 Nov)
+tests/               47 files (npm test: 530 tests, all passing on 18 Nov)
 scripts/smoke-package.mjs   installs the packed tarball and runs the user journey against it
 rubrics/, locales/          the published rubric and the fixture locale packs
 examples/                   Jira, GitHub and Linear importers; the example workflow
@@ -97,7 +102,7 @@ built-in `node:sqlite`, so there is no native build step.
 
 ## Testing
 
-- `npm test` (Node's test runner): 436 tests, all passing, on 18 Nov.
+- `npm test` (Node's test runner): 530 tests, all passing, on 18 Nov.
 - `node scripts/smoke-package.mjs <tarball>`: install from the packed tarball into a folder
   whose path has spaces, then version, init, record, ingest, gate, verify, export, the MCP
   handshake and the Inspector.

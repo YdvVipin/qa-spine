@@ -134,6 +134,29 @@ Filled in as each row lands.
 | 3.4 D1 page | `a8dfc21`, `0aa3470` | `release-page.test.ts`; real-browser run (below) | Done |
 | 3.7 D2 demo with three releases | `0aa3470` | `demo-releases.test.ts`, `demo-run.test.ts`, smoke | Done |
 
+| 4.1 C1 structured defect on a run | `ea40891` | `defect-link.test.ts` | Done |
+| 4.2 E1 a failed write is never silent or partial; a busy store says so | `17d41b5` | `write-errors.test.ts` (a real second process holds the lock) | Done |
+| 4.3 E3 producer `tool` runs shown as automated | `0b7cb54` | `tool-runs.test.ts` | Done |
+| 4.4 E5 `record --batch` | `bbe3254` | `record-batch.test.ts` | Done |
+| CI on the final commit | see the final report | 3 OS × Node 22.13 / 22 / 24 / 26, Node 20 / 22.12 refusal | See report |
+
+Deferred, with reasons:
+
+- **E4, signed identity for Inspector writes.** It needs RatifyQA to issue a token. Until then the
+  Release page records a typed name and says so; do not expose the Inspector publicly with
+  decisions enabled.
+- **E2, requirement identity across restarts.** RatifyQA's side (its process dictionary).
+- **C2, C3, D3, B1, B2** are RatifyQA tasks. C2 can now send `content.defect`; D3 can link to or
+  embed this page.
+- **F (importers, speed budget).** A separate plan.
+- **A publish-from-CI workflow with `--provenance`.** Not written: it adds a tag-triggered
+  workflow you have not asked for, and publishing stays yours. A five-line job can be added when
+  you want it.
+- **Links between lines of one `record --batch`.** A line can link to existing artifacts only,
+  not to one earlier in the same batch. Add `$line` references when a caller needs them.
+- **The real-browser check is not in CI.** Playwright is not a dependency of this repo; the
+  rendering and decision rules are covered by `release-page.test.ts` and `release-api.test.ts`.
+
 Real-browser run (18 Nov, headless Chromium from QAAE's installed Playwright, a scratch script
 not in this repo): 13 checks at 1280 and 375 px, all passed. It found two display faults, both
 fixed in `0aa3470`. It is not part of CI, because Playwright is not a dependency of this repo.
