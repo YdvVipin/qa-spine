@@ -66,3 +66,33 @@ jobs:
           path: pkg
       - shell: bash
         run: node scripts/smoke-package.mjs pkg/*.tgz
+
+  # The bin on a Node too old to run qa-spine: one sentence and exit 2, not the stack trace that
+  # importing node:sqlite gives. 22.12 is the last Node where node:sqlite needs a flag. Only
+  # cli.js runs here, so no install is needed.
+  old-node:
+    needs: pack
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22.12.0']
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: pkg
+      - shell: bash
+        run: |
+          tar -xzf pkg/*.tgz
+          set +e
+          node package/dist/cli.js --version 2> err.txt
+          code=$?
+          set -e
+          cat err.txt
+          [ "$code" = "2" ] || { echo "expected exit 2, got $code"; exit 1; }
+          grep -qF "qa-spine needs Node 22.13 or later; this is Node $(node -p process.versions.node)." err.txt
+          [ "$(wc -l < err.txt)" = "1" ] || { echo "expected one line"; exit 1; }

@@ -12,7 +12,7 @@
     "url": "https://github.com/YdvVipin/qa-spine/issues"
   },
   "type": "module",
-  "bin": {"qa-spine": "dist/server.js"},
+  "bin": {"qa-spine": "dist/cli.js"},
   "files": ["dist", "rubrics", "locales", "README.md"],
   "engines": {"node": ">=22.13"},
   "scripts": {

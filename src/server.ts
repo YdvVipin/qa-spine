@@ -480,7 +480,8 @@ const SUBCOMMANDS = new Set([
   'merge',
 ]);
 
-if (invokedAsScript()) {
+/** Everything the CLI does. Called when this file is the script, and by the `bin`, cli.ts. */
+export async function main(): Promise<void> {
   const subcommand = process.argv[2];
 
   // Resolved before dbPath(): none of these touch a store, so none may create one —
@@ -1024,3 +1025,5 @@ if (invokedAsScript()) {
     }
   }
 }
+
+if (invokedAsScript()) await main();
